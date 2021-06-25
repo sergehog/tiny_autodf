@@ -38,7 +38,6 @@ template <typename ScalarType = float>
 class AutoDf
 {
   public:
-
     /// Type for storing result of AutoDf formula evaluation
     struct Evaluation
     {
@@ -63,9 +62,8 @@ class AutoDf
     };
 
   private:
-
     /// If bulk creation of Variables is enabled, it keeps corresponding value
-    static volatile AutoType default_type_;
+    static volatile bool create_variables_;
 
     struct CallGraphNode
     {
@@ -305,20 +303,14 @@ class AutoDf
     size_t increment() const { return id_increment; }
 
     /// Explicitly set what type of AutoDf will be created by-default
-    static void StartConstants(const bool need_constant = true)
-    {
-        default_type_ = (need_constant) ? AutoType::kConstType : AutoType::kVariableType;
-    }
+    static void StartConstants(const bool need_constant = true) { create_variables_ = !(need_constant); }
 
-    static void StartVariables(const bool need_variable = true)
-    {
-        default_type_ = (need_variable) ? AutoType::kVariableType : AutoType::kConstType;
-    }
+    static void StartVariables(const bool need_variable = true) { create_variables_ = need_variable; }
 
     /// Creates kVariableType or kConstType (depending on default_type_) with zero value
     AutoDf()
     {
-        if (default_type_ == AutoType::kVariableType)
+        if (create_variables_)
         {
             node = std::make_shared<CallGraphNode>((++id_increment), AutoType::kVariableType);
             node->variables[node->ID] = node->value;
@@ -332,14 +324,16 @@ class AutoDf
     /// Creates kVariableType or kConstType (depending on default_type_) with specified value
     AutoDf(const ScalarType& scalar)
     {
-        if (default_type_ == AutoType::kConstType && scalar == static_cast<ScalarType>(0))
+        if (!create_variables_ && scalar == static_cast<ScalarType>(0))
         {
+            // avoid creation trivial const-type node
             node = zero_node;
         }
         else
         {
-            node = std::make_shared<CallGraphNode>((++id_increment), default_type_, scalar);
-            if (node->type == AutoType::kVariableType)
+            const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
+            node = std::make_shared<CallGraphNode>((++id_increment), default_type, scalar);
+            if (default_type == AutoType::kVariableType)
             {
                 node->variables[node->ID] = node->value;
             }
@@ -364,8 +358,9 @@ class AutoDf
     {
         if (node == zero_node && scalar != ScalarType(0))
         {
-            node = std::make_shared<CallGraphNode>((++id_increment), default_type_, scalar);
-            if (default_type_ == AutoType::kVariableType)
+            const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
+            node = std::make_shared<CallGraphNode>((++id_increment), default_type, scalar);
+            if (default_type == AutoType::kVariableType)
             {
                 node->variables[node->ID] = node->value;
             }
@@ -388,7 +383,7 @@ class AutoDf
 
     Evaluation eval() const { return node->eval(); }
 
-    /// Retrieves latest calculated valueabs
+    /// Retrieves latest calculated value
     ScalarType& value() const
     {
         if (node->type == AutoType::kVariableType)
@@ -397,7 +392,7 @@ class AutoDf
         }
         else
         {
-            // prohibit changing original node value
+            // prohibit exposing real value if this node is not of the variable type
             static ScalarType fake_value = ScalarType(0);
             fake_value = *node->value;
             return fake_value;
@@ -408,7 +403,8 @@ class AutoDf
 
     AutoDf<ScalarType>& operator+=(const ScalarType value)
     {
-        // avoid creating graph nodes, when not really needed
+        // avoid creation graph nodes, when not really needed
+        // (adding with const zero wont change anything)
         if (value == static_cast<ScalarType>(0))
         {
             return *this;
@@ -431,7 +427,7 @@ class AutoDf
 
     AutoDf<ScalarType>& operator+=(const AutoDf<ScalarType>& other)
     {
-        // avoid creating graph nodes, when not really needed
+        // avoid creation graph nodes, when not really needed
         if (other.node->type == AutoType::kConstType && *other.node->value == static_cast<ScalarType>(0))
         {
             return *this;
@@ -509,7 +505,7 @@ class AutoDf
         return AutoDf<ScalarType>(AutoType::kCosType, other.node, nullptr, std::cos(*other.node->value));
     }
 
-#define DEFINE_OPERATOR(op)                                                     \
+#define AUTODF_DEFINE_OPERATOR(op)                                              \
     template <typename T>                                                       \
     friend AutoDf<T> operator op(const AutoDf<T>& other, const T scalar_value); \
     template <typename T>                                                       \
@@ -517,11 +513,11 @@ class AutoDf
     template <typename T>                                                       \
     friend AutoDf<T> operator op(const AutoDf<T>& left, const AutoDf<T>& right);
 
-    DEFINE_OPERATOR(+);
-    DEFINE_OPERATOR(-);
-    DEFINE_OPERATOR(*);
-    DEFINE_OPERATOR(/);
-#undef DEFINE_OPERATOR
+    AUTODF_DEFINE_OPERATOR(+);
+    AUTODF_DEFINE_OPERATOR(-);
+    AUTODF_DEFINE_OPERATOR(*);
+    AUTODF_DEFINE_OPERATOR(/);
+#undef AUTODF_DEFINE_OPERATOR
 
     template <typename T>
     friend AutoDf<T> operator-(AutoDf<T> const& other);
@@ -624,11 +620,10 @@ AutoDf<ScalarType> operator-(AutoDf<ScalarType> const& other)
 }
 
 template <typename ScalarType>
-typename AutoDf<ScalarType>::AutoType volatile AutoDf<ScalarType>::default_type_ =
-    AutoDf<ScalarType>::AutoType::kVariableType;
+bool volatile AutoDf<ScalarType>::create_variables_ = true;
 
 /// MACRO to helps define operators of 2 arguments
-#define DEFINE_OPERATOR(OP, func)                                                                   \
+#define AUTODF_DEFINE_OPERATOR(OP, func)                                                            \
     template <typename ScalarType>                                                                  \
     AutoDf<ScalarType> operator OP(const AutoDf<ScalarType>& other, const ScalarType scalar_value)  \
     {                                                                                               \
@@ -648,14 +643,14 @@ typename AutoDf<ScalarType>::AutoType volatile AutoDf<ScalarType>::default_type_
     }
 
 /// Definition of math operators
-DEFINE_OPERATOR(+, make_sum);
-DEFINE_OPERATOR(-, make_sub);
-DEFINE_OPERATOR(*, make_mult);
-DEFINE_OPERATOR(/, make_div);
-#undef DEFINE_OPERATOR
+AUTODF_DEFINE_OPERATOR(+, make_sum);
+AUTODF_DEFINE_OPERATOR(-, make_sub);
+AUTODF_DEFINE_OPERATOR(*, make_mult);
+AUTODF_DEFINE_OPERATOR(/, make_div);
+#undef AUTODF_DEFINE_OPERATOR
 
 /// MACRO to helps define functions of 2 arguments
-#define DEFINE_FUNCTION(func)                                                                \
+#define AUTODF_DEFINE_FUNCTION(func)                                                         \
     template <typename ScalarType>                                                           \
     AutoDf<ScalarType> func(const AutoDf<ScalarType>& other, const ScalarType scalar_value)  \
     {                                                                                        \
@@ -675,9 +670,9 @@ DEFINE_OPERATOR(/, make_div);
     }
 
 /// Definition of some functions
-DEFINE_FUNCTION(min);
-DEFINE_FUNCTION(max);
-#undef DEFINE_FUNCTION
+AUTODF_DEFINE_FUNCTION(min);
+AUTODF_DEFINE_FUNCTION(max);
+#undef AUTODF_DEFINE_FUNCTION
 
 /// Functions of 1 argument do not require macros
 template <typename ScalarType>
@@ -698,7 +693,7 @@ AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     return AutoDf<ScalarType>::cos(other);
 }
 
-#define INSTANTIATE_AUTODF_TEMPLATE(typename)                                            \
+#define AUTODF_INSTANTIATE_TYPE(typename)                                                \
     template <>                                                                          \
     size_t AutoDf<typename>::id_increment = 0U;                                          \
     template <>                                                                          \
@@ -706,10 +701,17 @@ AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
         std::make_shared<AutoDf<typename>::CallGraphNode>(0, AutoType::kConstType, 0.F); \
     AutoDf<typename> ____instantiate_AutoDf_##typename;
 
-INSTANTIATE_AUTODF_TEMPLATE(float);
+#ifndef AUTODF_DONT_INSTANTIATE_FLOAT
+AUTODF_INSTANTIATE_TYPE(float);
+#endif
 
-/// In order to instantiate AutoDf<double> class one need either uncomment next line, or write one in their code
-// INSTANTIATE_AUTODF_TEMPLATE(double);
+#ifndef AUTODF_DONT_INSTANTIATE_DOUBLE
+AUTODF_INSTANTIATE_TYPE(double);
+#endif
+
+/// By-default AutoDf is only instantiated for `float` and `double` types
+/// In order to instantiate AutoDf for some other type, like std::complex you need to write in your code
+/// AUTODF_INSTANTIATE_TYPE(std::complex);
 
 template <typename ScalarType>
 struct TerminationCriteria
