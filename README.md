@@ -1,5 +1,7 @@
 ## tiny_autodf : Tiny header-only Automatic Differentiation library (C++)
 
+![CMake Test Status](https://github.com/sergehog/tiny_autodf/actions/workflows/master.yml/badge.svg?branch=master)
+
 Attemp to create simple to use AD mechanism, which could be easily integrated into existing formulas and algorithms, making them essentially differentiable.
 
 # Usage Example (drop-in replacement)
