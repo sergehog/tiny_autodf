@@ -23,6 +23,7 @@
 //
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -38,11 +39,14 @@ template <typename ScalarType = float>
 class AutoDf
 {
   public:
+    /// Each AutoDf despite its AutoType has ID of this type
+    using IdType = size_t;
+
     /// Type for storing result of AutoDf formula evaluation
     struct Evaluation
     {
         ScalarType value;
-        std::unordered_map<size_t, ScalarType> derivatives;
+        std::unordered_map<IdType, ScalarType> derivatives;
     };
 
     /// List of all implemented AutoDf variants and operations
@@ -63,20 +67,23 @@ class AutoDf
 
   private:
     /// If bulk creation of Variables is enabled, it keeps corresponding value
-    static volatile bool create_variables_;
+    static std::atomic<bool> create_variables_;
+
+    ///  Latest assigned ID value
+    static std::atomic<IdType> id_increment_;
 
     struct CallGraphNode
     {
-        size_t ID;
-        AutoType type;
-        size_t count;
+        IdType ID{};
+        AutoType type{};
+        size_t count{};
         std::shared_ptr<CallGraphNode> left{};
         std::shared_ptr<CallGraphNode> right{};
         std::shared_ptr<ScalarType> value{};
         std::unordered_map<size_t, std::shared_ptr<ScalarType>> variables{};
 
-        CallGraphNode(const size_t id, const AutoType Type, const ScalarType& value_ = static_cast<ScalarType>(0.))
-            : ID(id), type(Type)
+        CallGraphNode(const AutoType Type, const ScalarType& value_ = static_cast<ScalarType>(0.))
+            : ID(id_increment_++), type(Type)
         {
             value = std::make_shared<ScalarType>(value_);
             count = 1;
@@ -262,11 +269,11 @@ class AutoDf
     };
 
     /// Graph Node belonging to current variable / AutoDf instance
-    std::shared_ptr<CallGraphNode> node{};
+    std::shared_ptr<CallGraphNode> node_{};
 
     /// In order not to multiply zero-valued ConstType nodes, we maintain single such node and re-use
     /// Reduces memory-consumption as well unpredictable id_increment grow
-    static const std::shared_ptr<CallGraphNode> zero_node;
+    static const std::shared_ptr<CallGraphNode> zero_;
 
     /// Creates AutoDf of specified type, and takes their ownership if needed
     AutoDf(const AutoType type,
@@ -274,33 +281,29 @@ class AutoDf
            const std::shared_ptr<CallGraphNode>& right,
            const ScalarType& value = static_cast<ScalarType>(0.))
     {
-        node = std::make_shared<CallGraphNode>((++id_increment), type, value);
-        node->left = left;
-        node->right = right;
-        node->count = 0U;
+        node_ = std::make_shared<CallGraphNode>(type, value);
+        node_->left = left;
+        node_->right = right;
+        node_->count = 0U;
         if (left)
         {
-            node->count += left->count;
-            node->variables.insert(left->variables.begin(), left->variables.end());
+            node_->count += left->count;
+            node_->variables.insert(left->variables.begin(), left->variables.end());
         }
         if (right)
         {
-            node->count += right->count;
-            node->variables.insert(right->variables.begin(), right->variables.end());
+            node_->count += right->count;
+            node_->variables.insert(right->variables.begin(), right->variables.end());
         }
     }
 
-    AutoDf(const std::shared_ptr<CallGraphNode>& node_in) : node(node_in) {}
-
-    static size_t id_increment;
+    AutoDf(const std::shared_ptr<CallGraphNode>& node_in) : node_(node_in) {}
 
   public:
     /// Read-only ID value, could be used to distinguish partial derivative of this variable
-    size_t ID() const { return node->ID; }
+    IdType ID() const { return node_->ID; }
 
-    size_t count() const { return node->count; }
-
-    size_t increment() const { return id_increment; }
+    size_t count() const { return node_->count; }
 
     /// Explicitly set what type of AutoDf will be created by-default
     static void StartConstants(const bool need_constant = true) { create_variables_ = !(need_constant); }
@@ -312,12 +315,12 @@ class AutoDf
     {
         if (create_variables_)
         {
-            node = std::make_shared<CallGraphNode>((++id_increment), AutoType::kVariableType);
-            node->variables[node->ID] = node->value;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kVariableType);
+            node_->variables[node_->ID] = node_->value;
         }
         else
         {
-            node = zero_node;
+            node_ = zero_;
         }
     }
 
@@ -327,79 +330,80 @@ class AutoDf
         if (!create_variables_ && scalar == static_cast<ScalarType>(0))
         {
             // avoid creation trivial const-type node
-            node = zero_node;
+            node_ = zero_;
         }
         else
         {
             const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
-            node = std::make_shared<CallGraphNode>((++id_increment), default_type, scalar);
+            node_ = std::make_shared<CallGraphNode>(default_type, scalar);
             if (default_type == AutoType::kVariableType)
             {
-                node->variables[node->ID] = node->value;
+                node_->variables[node_->ID] = node_->value;
             }
         }
     }
 
     /// Copy-Constructor, re-uses computation graph node
-    AutoDf(const AutoDf<ScalarType>& other) { node = other.node; }
+    AutoDf(const AutoDf<ScalarType>& other) { node_ = other.node_; }
 
     /// Additional way to create AutoDf of specified type
     AutoDf(const ScalarType& value, const bool is_const)
     {
         const auto type = (is_const ? AutoType::kConstType : AutoType::kVariableType);
-        node = std::make_shared<CallGraphNode>((++id_increment), type, value);
-        if (node->type == AutoType::kVariableType)
+        node_ = std::make_shared<CallGraphNode>(type, value);
+        if (node_->type == AutoType::kVariableType)
         {
-            node->variables[node->ID] = node->value;
+            node_->variables[node_->ID] = node_->value;
         }
     }
 
     AutoDf& operator=(const ScalarType& scalar)
     {
-        if (node == zero_node && scalar != ScalarType(0))
+        if (node_ == zero_ && scalar != ScalarType(0))
         {
             const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
-            node = std::make_shared<CallGraphNode>((++id_increment), default_type, scalar);
+            node_ = std::make_shared<CallGraphNode>(default_type, scalar);
             if (default_type == AutoType::kVariableType)
             {
-                node->variables[node->ID] = node->value;
+                node_->variables[node_->ID] = node_->value;
             }
         }
-        else if (node->type == AutoType::kConstType || node->type == AutoType::kVariableType)
+        else if (node_->type == AutoType::kConstType || node_->type == AutoType::kVariableType)
         {
-            *node->value = scalar;
+            *node_->value = scalar;
         }
         return *this;
     }
 
     AutoDf<ScalarType>& operator=(const AutoDf<ScalarType>& other)
     {
-        node = other.node;
+        node_ = other.node_;
         return *this;
     }
 
     /// List of input "mutable" values, contributing to this AutoDf value
-    std::unordered_map<size_t, std::shared_ptr<ScalarType>>& variables() const { return node->variables; }
+    std::unordered_map<size_t, std::shared_ptr<ScalarType>>& variables() const { return node_->variables; }
 
-    Evaluation eval() const { return node->eval(); }
+    Evaluation eval() const { return node_->eval(); }
 
-    /// Retrieves latest calculated value
+    /// @returns latest calculated value or sets new one (but only for variables)
+    /// One may change underlying value directly
     ScalarType& value() const
     {
-        if (node->type == AutoType::kVariableType)
+        if (node_->type == AutoType::kVariableType)
         {
-            return *node->value;
+            return *node_->value;
         }
         else
         {
             // prohibit exposing real value if this node is not of the variable type
             static ScalarType fake_value = ScalarType(0);
-            fake_value = *node->value;
+            fake_value = *node_->value;
             return fake_value;
         }
     }
 
-    explicit operator ScalarType() const { return *node->value; }
+    explicit operator ScalarType() const { return *node_->value; }
 
     AutoDf<ScalarType>& operator+=(const ScalarType value)
     {
@@ -409,38 +413,37 @@ class AutoDf
         {
             return *this;
         }
-        else if (node == zero_node)
+        else if (node_ == zero_)
         {
-            node = std::make_shared<CallGraphNode>((++id_increment), AutoType::kConstType, value);
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, value);
             return *this;
         }
-        else if (node->type == AutoType::kConstType)
+        else if (node_->type == AutoType::kConstType)
         {
-            const ScalarType old_node_value = *node->value;
-            node = std::make_shared<CallGraphNode>((++id_increment), AutoType::kConstType, old_node_value + value);
+            const ScalarType old_node_value = *node_->value;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, old_node_value + value);
             return *this;
         }
 
         AutoDf<ScalarType> other(value, true);
-        return InPlaceOperator(AutoType::kSumType, other.node, *node->value + *other.node->value);
+        return InPlaceOperator(AutoType::kSumType, other.node_, *node_->value + *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator+=(const AutoDf<ScalarType>& other)
     {
         // avoid creation graph nodes, when not really needed
-        if (other.node->type == AutoType::kConstType && *other.node->value == static_cast<ScalarType>(0))
+        if (other.node_->type == AutoType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
         {
             return *this;
         }
-        else if (node->type == AutoType::kConstType && other.node->type == AutoType::kConstType)
+        else if (node_->type == AutoType::kConstType && other.node_->type == AutoType::kConstType)
         {
-            const ScalarType node_value = *node->value;
-            node = std::make_shared<CallGraphNode>(
-                (++id_increment), AutoType::kConstType, node_value + *other.node->value);
+            const ScalarType node_value = *node_->value;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value + *other.node_->value);
             return *this;
         }
 
-        return InPlaceOperator(AutoType::kSumType, other.node, *node->value + *other.node->value);
+        return InPlaceOperator(AutoType::kSumType, other.node_, *node_->value + *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator-=(const ScalarType value)
@@ -450,59 +453,58 @@ class AutoDf
         {
             return *this;
         }
-        else if (node->type == AutoType::kConstType)
+        else if (node_->type == AutoType::kConstType)
         {
-            const ScalarType node_value = *node->value;
-            node = std::make_shared<CallGraphNode>((++id_increment), AutoType::kConstType, node_value - value);
+            const ScalarType node_value = *node_->value;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value - value);
             return *this;
         }
 
         AutoDf<ScalarType> other(value, true);
-        return InPlaceOperator(AutoType::kSubtractType, other.node, *node->value - *other.node->value);
+        return InPlaceOperator(AutoType::kSubtractType, other.node_, *node_->value - *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator-=(const AutoDf<ScalarType>& other)
     {
-        if (other.node->type == AutoType::kConstType && *other.node->value == static_cast<ScalarType>(0))
+        if (other.node_->type == AutoType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
         {
             return *this;
         }
-        else if (node->type == AutoType::kConstType && other.node->type == AutoType::kConstType)
+        else if (node_->type == AutoType::kConstType && other.node_->type == AutoType::kConstType)
         {
-            const ScalarType node_value = *node->value;
-            node = std::make_shared<CallGraphNode>(
-                (++id_increment), AutoType::kConstType, node_value - *other.node->value);
+            const ScalarType node_value = *node_->value;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value - *other.node_->value);
             return *this;
         }
 
-        return InPlaceOperator(AutoType::kSubtractType, other.node, *node->value - *other.node->value);
+        return InPlaceOperator(AutoType::kSubtractType, other.node_, *node_->value - *other.node_->value);
     }
 
     static AutoDf<ScalarType> abs(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kAbsType, other.node, nullptr, std::abs(*other.node->value));
+        return AutoDf<ScalarType>(AutoType::kAbsType, other.node_, nullptr, std::abs(*other.node_->value));
     }
 
     static AutoDf<ScalarType> min(const AutoDf<ScalarType>& left, const AutoDf<ScalarType>& right)
     {
         return AutoDf<ScalarType>(
-            AutoType::kMinType, left.node, right.node, std::min(*left.node->value, *right.node->value));
+            AutoType::kMinType, left.node_, right.node_, std::min(*left.node_->value, *right.node_->value));
     }
 
     static AutoDf<ScalarType> max(const AutoDf<ScalarType>& left, const AutoDf<ScalarType>& right)
     {
         return AutoDf<ScalarType>(
-            AutoType::kMaxType, left.node, right.node, std::max(*left.node->value, *right.node->value));
+            AutoType::kMaxType, left.node_, right.node_, std::max(*left.node_->value, *right.node_->value));
     }
 
     static AutoDf<ScalarType> sin(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kSinType, other.node, nullptr, std::sin(*other.node->value));
+        return AutoDf<ScalarType>(AutoType::kSinType, other.node_, nullptr, std::sin(*other.node_->value));
     }
 
     static AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kCosType, other.node, nullptr, std::cos(*other.node->value));
+        return AutoDf<ScalarType>(AutoType::kCosType, other.node_, nullptr, std::cos(*other.node_->value));
     }
 
 #define AUTODF_DEFINE_OPERATOR(op)                                              \
@@ -527,13 +529,13 @@ class AutoDf
                                         const std::shared_ptr<CallGraphNode>& right_node,
                                         const ScalarType new_value)
     {
-        auto result = std::make_shared<CallGraphNode>(++id_increment, type, new_value);
-        result->left = node;
+        auto result = std::make_shared<CallGraphNode>(type, new_value);
+        result->left = node_;
         result->right = right_node;
-        result->count = node->count + right_node->count;
-        result->variables.insert(node->variables.begin(), node->variables.end());
+        result->count = node_->count + right_node->count;
+        result->variables.insert(node_->variables.begin(), node_->variables.end());
         result->variables.insert(right_node->variables.begin(), right_node->variables.end());
-        node.swap(result);
+        node_.swap(result);
         return *this;
     }
 
@@ -570,11 +572,11 @@ class AutoDf
     {
         if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(0))
         {
-            return AutoDf<ScalarType>(zero_node);
+            return AutoDf<ScalarType>(zero_);
         }
         if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(0))
         {
-            return AutoDf<ScalarType>(zero_node);
+            return AutoDf<ScalarType>(zero_);
         }
         if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(1))
         {
@@ -594,7 +596,7 @@ class AutoDf
     {
         if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(0))
         {
-            return AutoDf<ScalarType>(zero_node);
+            return AutoDf<ScalarType>(zero_);
         }
         if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(1))
         {
@@ -609,18 +611,15 @@ class AutoDf
 template <typename ScalarType>
 AutoDf<ScalarType> operator-(AutoDf<ScalarType> const& other)
 {
-    if (other.node->type == AutoDf<ScalarType>::AutoType::kConstType)
+    if (other.node_->type == AutoDf<ScalarType>::AutoType::kConstType)
     {
         return AutoDf<ScalarType>(-other.value(), true);
     }
     else
     {
-        return AutoDf<ScalarType>::make_sub(AutoDf<ScalarType>::zero_node, other.node);
+        return AutoDf<ScalarType>::make_sub(AutoDf<ScalarType>::zero_, other.node_);
     }
 }
-
-template <typename ScalarType>
-bool volatile AutoDf<ScalarType>::create_variables_ = true;
 
 /// MACRO to helps define operators of 2 arguments
 #define AUTODF_DEFINE_OPERATOR(OP, func)                                                            \
@@ -628,18 +627,18 @@ bool volatile AutoDf<ScalarType>::create_variables_ = true;
     AutoDf<ScalarType> operator OP(const AutoDf<ScalarType>& other, const ScalarType scalar_value)  \
     {                                                                                               \
         AutoDf<ScalarType> scalar(scalar_value, true);                                              \
-        return AutoDf<ScalarType>::func(other.node, scalar.node);                                   \
+        return AutoDf<ScalarType>::func(other.node_, scalar.node_);                                 \
     }                                                                                               \
     template <typename ScalarType>                                                                  \
     AutoDf<ScalarType> operator OP(const ScalarType scalar_value, const AutoDf<ScalarType>& other)  \
     {                                                                                               \
         AutoDf<ScalarType> scalar(scalar_value, true);                                              \
-        return AutoDf<ScalarType>::func(scalar.node, other.node);                                   \
+        return AutoDf<ScalarType>::func(scalar.node_, other.node_);                                 \
     }                                                                                               \
     template <typename ScalarType>                                                                  \
     AutoDf<ScalarType> operator OP(const AutoDf<ScalarType>& left, const AutoDf<ScalarType>& right) \
     {                                                                                               \
-        return AutoDf<ScalarType>::func(left.node, right.node);                                     \
+        return AutoDf<ScalarType>::func(left.node_, right.node_);                                   \
     }
 
 /// Definition of math operators
@@ -693,12 +692,14 @@ AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     return AutoDf<ScalarType>::cos(other);
 }
 
-#define AUTODF_INSTANTIATE_TYPE(typename)                                                \
-    template <>                                                                          \
-    size_t AutoDf<typename>::id_increment = 0U;                                          \
-    template <>                                                                          \
-    const std::shared_ptr<AutoDf<typename>::CallGraphNode> AutoDf<typename>::zero_node = \
-        std::make_shared<AutoDf<typename>::CallGraphNode>(0, AutoType::kConstType, 0.F); \
+#define AUTODF_INSTANTIATE_TYPE(typename)                                                      \
+    template <>                                                                                \
+    std::atomic<bool> AutoDf<typename>::create_variables_{true};                               \
+    template <>                                                                                \
+    std::atomic<AutoDf<typename>::IdType> AutoDf<typename>::id_increment_{0U};                 \
+    template <>                                                                                \
+    const std::shared_ptr<AutoDf<typename>::CallGraphNode> AutoDf<typename>::zero_ =           \
+        std::make_shared<AutoDf<typename>::CallGraphNode>(AutoType::kConstType, typename(0.)); \
     AutoDf<typename> ____instantiate_AutoDf_##typename;
 
 #ifndef AUTODF_DONT_INSTANTIATE_FLOAT
