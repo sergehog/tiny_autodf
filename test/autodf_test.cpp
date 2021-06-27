@@ -19,14 +19,27 @@
 #include "../tiny_autodf.h"
 #include <gtest/gtest.h>
 
-using namespace tiny_autodf;
+using Float = tiny_autodf::AutoDf<float>;
+
+TEST(AutoDfTest, BasicTest)
+{
+    Float x = 11.F;
+    Float y = x + 5.F;
+    EXPECT_EQ(x.value(), 11.f);
+    EXPECT_EQ(y.value(), 16.f);
+
+    x.value() = 10.F;
+    EXPECT_EQ(y.value(), 16.f);  // value of y has not changed yet
+    EXPECT_EQ(y.eval().value, 15.F);
+    EXPECT_EQ(y.value(), 15.f);  // after eval value has updated
+}
 
 TEST(AutoDfTest, OneDependentVariableTest)
 {
-    AutoDf<> x = 15.F;
-    AutoDf<> y = x + 5.F;
-    AutoDf<> z = (2.f * x + 2.F) * (y - 3.F);
-    AutoDf<> w = z / (x + 1.F);
+    Float x = 15.F;
+    Float y = x + 5.F;
+    Float z = (2.f * x + 2.F) * (y - 3.F);
+    Float w = z / (x + 1.F);
 
     EXPECT_EQ(x.value(), 15.f);
     EXPECT_EQ(y.value(), 20.f);
@@ -68,7 +81,7 @@ TEST(AutoDfTest, OneDependentVariableTest)
 
     x.value() += 1.F;
     // re-calculate only one formula, but other are updated too, since they are part of call-graph
-    we = w.eval();
+    w.eval();
     EXPECT_EQ(x.value(), 16.f);
     EXPECT_EQ(y.value(), 25.f);
     EXPECT_EQ(z.value(), 612.f);
@@ -77,9 +90,9 @@ TEST(AutoDfTest, OneDependentVariableTest)
 
 TEST(AutoDfTest, SumTest)
 {
-    AutoDf<float> x = 7.F;
-    AutoDf<float> y = (x + 3.F) + 5.F;
-    AutoDf<float> z = (5.F + y) + x;
+    Float x = 7.F;
+    Float y = (x + 3.F) + 5.F;
+    Float z = (5.F + y) + x;
 
     EXPECT_EQ(x.value(), 7.F);
     EXPECT_EQ(y.value(), 15.F);
@@ -123,9 +136,9 @@ TEST(AutoDfTest, SumTest)
 
 TEST(AutoDfTest, SubtractTest)
 {
-    AutoDf<> x = 10.F;
-    AutoDf<> y = 20.F - x - 5.F;
-    AutoDf<> z = 7.F - (10.F - y);
+    Float x = 10.F;
+    Float y = 20.F - x - 5.F;
+    Float z = 7.F - (10.F - y);
 
     EXPECT_EQ(x.value(), 10.f);
     EXPECT_EQ(y.value(), 5.F);
@@ -169,8 +182,8 @@ TEST(AutoDfTest, SubtractTest)
 
 TEST(AutoDfTest, MultiplicationTest)
 {
-    AutoDf<> x = 7.F;
-    AutoDf<> y = (x - 1.f) * (x + 1.F) * 2.F;
+    Float x = 7.F;
+    Float y = (x - 1.f) * (x + 1.F) * 2.F;
 
     EXPECT_EQ(x.value(), 7.f);
     EXPECT_EQ(y.value(), 6.f * 8.F * 2.F);
@@ -206,8 +219,8 @@ TEST(AutoDfTest, MultiplicationTest)
 
 TEST(AutoDfTest, DivisionTest)
 {
-    AutoDf<> x = 7.F;
-    AutoDf<> y = (x - 1.f) / (x + 1.F) / 2.F;
+    Float x = 7.F;
+    Float y = (x - 1.f) / (x + 1.F) / 2.F;
 
     EXPECT_EQ(x.value(), 7.f);
     EXPECT_EQ(y.value(), 6.f / 8.F / 2.F);
@@ -243,14 +256,12 @@ TEST(AutoDfTest, DivisionTest)
 
 TEST(AutoDfTest, AbsMinMaxTest)
 {
-    AutoDf<>::StartVariables();
-    AutoDf<> x = 7.F;
-    AutoDf<> y = -5.F;
-    AutoDf<>::StartConstants();
-    AutoDf<> absx = abs(x);
-    AutoDf<> absy = abs(y);
-    AutoDf<> minxy = min(x, y);
-    AutoDf<> maxxy = max(x, y);
+    Float x = 7.F;
+    Float y = -5.F;
+    Float absx = abs(x);
+    Float absy = abs(y);
+    Float minxy = min(x, y);
+    Float maxxy = max(x, y);
 
     EXPECT_EQ(absx.value(), 7.F);
     EXPECT_EQ(absy.value(), 5.F);
@@ -278,11 +289,9 @@ TEST(AutoDfTest, AbsMinMaxTest)
 
 TEST(AutoDfTest, SinCosTest)
 {
-    AutoDf<>::StartVariables();
-    AutoDf<> x = 7.F;
-    AutoDf<>::StartConstants();
-    AutoDf<> sinx = sin(x);
-    AutoDf<> cosx = cos(x);
+    Float x = 7.F;
+    Float sinx = sin(x);
+    Float cosx = cos(x);
 
     EXPECT_EQ(sinx.value(), std::sin(7.F));
     EXPECT_EQ(cosx.value(), std::cos(7.F));
@@ -303,11 +312,8 @@ TEST(AutoDfTest, SinCosTest)
 
 TEST(AutoDfTest, SimpleGradientDescentTest)
 {
-    AutoDf<>::StartVariables();
-    AutoDf<> x = 0.5F;
-    AutoDf<>::StartConstants();
-
-    AutoDf<> formula = -cos(x);
+    Float x = 0.5F;
+    Float formula = -cos(x);
     EXPECT_NEAR(formula.value(), -cos(x.value()), 1E-6F);
     ASSERT_EQ(formula.variables().size(), 1U);
 
@@ -320,13 +326,10 @@ TEST(AutoDfTest, SimpleGradientDescentTest)
 
 TEST(AutoDfTest, GradientDescentTest)
 {
-    AutoDf<>::StartVariables();
-    AutoDf<> x = 0.5F;
-    AutoDf<>::StartConstants();
+    Float x = 0.5F;
+    Float formula = min(-cos(x) + 0.5F * abs(x + 2.F) + (x - 1.F) * (x - 1.F) * 0.1F, 5.F);
 
-    AutoDf<> formula = min(-cos(x) + 0.5F * abs(x + 2.F) + (x - 1.F) * (x - 1.F) * 0.1F, 5.F);
-
-    AutoDf<>::Evaluation result;
+    Float::Evaluation result;
     ASSERT_NO_THROW(result = GradientDescent(formula, {NAN, 1e-6F}));
 
     ASSERT_EQ(result.derivatives.size(), 1U);

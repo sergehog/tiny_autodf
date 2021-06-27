@@ -93,179 +93,238 @@ class AutoDf
         /// @returns evaluated value & values of derivatives
         Evaluation eval()
         {
-            Evaluation eval_out{};
-            if (type == AutoType::kConstType)
+            switch (type)
             {
-                eval_out.value = *value;
-                return eval_out;
+                case AutoType::kConstType:
+                    return evalConst();
+                case AutoType::kVariableType:
+                    return evalVariable();
+                case AutoType::kSumType:
+                    return evalSum();
+                case AutoType::kSubtractType:
+                    return evalSubtract();
+                case AutoType::kMultType:
+                    return evalMult();
+                case AutoType::kDivType:
+                    return evalDiv();
+                case AutoType::kAbsType:
+                    return evalAbs();
+                case AutoType::kMaxType:
+                    return evalMax();
+                case AutoType::kMinType:
+                    return evalMin();
+                case AutoType::kSinType:
+                    return evalSin();
+                case AutoType::kCosType:
+                default:
+                    return evalCos();
             }
-            else if (type == AutoType::kVariableType)
+        }
+
+        Evaluation evalConst()
+        {
+            Evaluation result{*value};
+            return result;
+        }
+
+        Evaluation evalVariable()
+        {
+            Evaluation result{*value};
+            result.derivatives[ID] = ScalarType(1.);
+            return result;
+        }
+
+        Evaluation evalAbs()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::abs(left_eval.value)};
+            *value = result.value;  // update latest known value of this "dynamic" node
+            const bool sign_changed = left_eval.value < ScalarType(0.);
+            for (auto dx_iter : left_eval.derivatives)
             {
-                eval_out.value = *value;
-                eval_out.derivatives[ID] = static_cast<ScalarType>(1.);
-                return eval_out;
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = sign_changed ? -dx : dx;
+            }
+            return result;
+        }
+
+        Evaluation evalSin()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::sin(left_eval.value)};
+            *value = result.value;
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = std::cos(left_eval.value) * dx;
+            }
+            return result;
+        }
+
+        Evaluation evalCos()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::cos(left_eval.value)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = -std::sin(left_eval.value) * dx;
+            }
+            return result;
+        }
+
+        Evaluation evalSum()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{left_eval.value + right_eval.value};
+            *value = result.value;
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] += dx;
+            }
+            for (auto dx_iter : right_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] += dx;
             }
 
-            const auto eval1 = left->eval();
-            const ScalarType v1 = eval1.value;
+            return result;
+        }
 
-            if (type == AutoType::kAbsType)
+        Evaluation evalSubtract()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{left_eval.value - right_eval.value};
+            *value = result.value;
+            for (auto dx_iter : left_eval.derivatives)
             {
-                *value = eval_out.value = std::abs(v1);
-                const bool sign_changed = v1 < ScalarType(0.);
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] += dx;
+            }
+            for (auto dx_iter : right_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] -= dx;
+            }
+
+            return result;
+        }
+
+        Evaluation evalMult()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{left_eval.value * right_eval.value, {}};
+            *value = result.value;
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] += dx * right_eval.value;
+            }
+            for (auto dx_iter : right_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] += dx * left_eval.value;
+            }
+
+            return result;
+        }
+
+        /// For explanation please refer to
+        /// https://www.mathsisfun.com/calculus/derivatives-rules.html
+        Evaluation evalDiv()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{left_eval.value / right_eval.value};
+            *value = result.value;
+            const auto f = left_eval.value;
+            const auto g = right_eval.value;
+            for (auto df_iter : left_eval.derivatives)
+            {
+                const IdType id = df_iter.first;
+                const ScalarType df = df_iter.second;
+                result.derivatives[id] += df * g / (g * g);
+            }
+            for (auto dg_iter : right_eval.derivatives)
+            {
+                const IdType id = dg_iter.first;
+                const ScalarType dg = dg_iter.second;
+                result.derivatives[id] -= dg * f / (g * g);
+            }
+
+            return result;
+        }
+
+        Evaluation evalMax()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{std::max(left_eval.value, right_eval.value)};
+            *value = result.value;
+            if (left_eval.value >= right_eval.value)
+            {
+                for (auto dx_iter : left_eval.derivatives)
                 {
-                    const size_t id = vi->first;
-                    const float d1 = eval1.derivatives.at(id);
-                    eval_out.derivatives[id] = sign_changed ? -d1 : d1;
+                    const IdType id = dx_iter.first;
+                    const ScalarType dx = dx_iter.second;
+                    result.derivatives[id] = dx;
                 }
-                return eval_out;
             }
-            else if (type == AutoType::kSinType)
+            else
             {
-                *value = eval_out.value = std::sin(v1);
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
+                for (auto dx_iter : right_eval.derivatives)
                 {
-                    const size_t id = vi->first;
-                    const float d1 = eval1.derivatives.at(id);
-                    eval_out.derivatives[id] = std::cos(eval1.value) * d1;
+                    const IdType id = dx_iter.first;
+                    const ScalarType dx = dx_iter.second;
+                    result.derivatives[id] += dx;
                 }
-                return eval_out;
             }
-            else if (type == AutoType::kCosType)
+
+            return result;
+        }
+
+        Evaluation evalMin()
+        {
+            const auto left_eval = left->eval();
+            const auto right_eval = right->eval();
+            Evaluation result{std::min(left_eval.value, right_eval.value)};
+            *value = result.value;
+            if (left_eval.value <= right_eval.value)
             {
-                *value = eval_out.value = std::cos(v1);
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
+                for (auto dx_iter : left_eval.derivatives)
                 {
-                    const size_t id = vi->first;
-                    const float d1 = eval1.derivatives.at(id);
-                    eval_out.derivatives[id] = -std::sin(eval1.value) * d1;
+                    const IdType id = dx_iter.first;
+                    const ScalarType dx = dx_iter.second;
+                    result.derivatives[id] = dx;
                 }
-                return eval_out;
             }
-
-            const auto eval2 = right->eval();
-            const ScalarType v2 = eval2.value;
-
-            if (type == AutoType::kSumType)
+            else
             {
-                *value = eval_out.value = v1 + v2;
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
+                for (auto dx_iter : right_eval.derivatives)
                 {
-                    const size_t id = vi->first;
-                    eval_out.derivatives[id] = static_cast<ScalarType>(0.);
-                    const auto d1 = eval1.derivatives.find(id);
-                    if (d1 != eval1.derivatives.end())
-                    {
-                        eval_out.derivatives[id] += d1->second;
-                    }
-                    const auto d2 = eval2.derivatives.find(id);
-                    if (d2 != eval2.derivatives.end())
-                    {
-                        eval_out.derivatives[id] += d2->second;
-                    }
-                }
-            }
-            else if (type == AutoType::kSubtractType)
-            {
-                *value = eval_out.value = v1 - v2;
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
-                {
-                    const size_t id = vi->first;
-                    eval_out.derivatives[id] = static_cast<ScalarType>(0.);
-                    const auto d1 = eval1.derivatives.find(id);
-                    if (d1 != eval1.derivatives.end())
-                    {
-                        eval_out.derivatives[id] += d1->second;
-                    }
-                    const auto d2 = eval2.derivatives.find(id);
-                    if (d2 != eval2.derivatives.end())
-                    {
-                        eval_out.derivatives[id] -= d2->second;
-                    }
-                }
-            }
-            else if (type == AutoType::kMultType)
-            {
-                *value = eval_out.value = v1 * v2;
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
-                {
-                    const size_t id = vi->first;
-                    eval_out.derivatives[id] = static_cast<ScalarType>(0.);
-                    const auto d1 = eval1.derivatives.find(id);
-                    if (d1 != eval1.derivatives.end())
-                    {
-                        const ScalarType g1 = d1->second;
-                        eval_out.derivatives[id] += v2 * g1;
-                    }
-                    const auto d2 = eval2.derivatives.find(id);
-                    if (d2 != eval2.derivatives.end())
-                    {
-                        const ScalarType g2 = d2->second;
-                        eval_out.derivatives[id] += v1 * g2;
-                    }
-                }
-            }
-            else if (type == AutoType::kDivType)
-            {
-                *value = eval_out.value = v1 / v2;
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
-                {
-                    const size_t id = vi->first;
-                    const auto g1 = eval1.derivatives.find(id);
-                    const auto g2 = eval2.derivatives.find(id);
-                    if (g1 != eval1.derivatives.end())
-                    {
-                        const ScalarType d1 = g1->second;
-
-                        eval_out.derivatives[id] += d1 * v2 / (v2 * v2);
-                    }
-                    if (g2 != eval2.derivatives.end())
-                    {
-                        const ScalarType d2 = g2->second;
-                        eval_out.derivatives[id] -= d2 * v1 / (v2 * v2);
-                    }
-                }
-            }
-            else if (type == AutoType::kMaxType || type == AutoType::kMinType)
-            {
-                const bool left_selected = type == AutoType::kMaxType ? v1 >= v2 : v1 <= v2;
-                *value = eval_out.value = left_selected ? v1 : v2;
-
-                for (auto vi = variables.begin(); vi != variables.end(); vi++)
-                {
-                    const size_t id = vi->first;
-                    const auto d1 = eval1.derivatives.find(id);
-                    const auto d2 = eval2.derivatives.find(id);
-                    if (d1 != eval1.derivatives.end() && left_selected)
-                    {
-                        eval_out.derivatives[id] = d1->second;
-                    }
-                    else
-                    {
-                        eval_out.derivatives[id] = ScalarType(0.);
-                    }
-                    if (d2 != eval1.derivatives.end() && !left_selected)
-                    {
-                        if (d2 != eval1.derivatives.end())
-                        {
-                            eval_out.derivatives[id] = d2->second;
-                        }
-                        else
-                        {
-                            eval_out.derivatives[id] = ScalarType(0.);
-                        }
-                    }
+                    const IdType id = dx_iter.first;
+                    const ScalarType dx = dx_iter.second;
+                    result.derivatives[id] += dx;
                 }
             }
 
-            return eval_out;
-        };
+            return result;
+        }
     };
 
     /// Graph Node belonging to current variable / AutoDf instance
@@ -297,6 +356,7 @@ class AutoDf
         }
     }
 
+    /// private Ctor for manual node setup
     AutoDf(const std::shared_ptr<CallGraphNode>& node_in) : node_(node_in) {}
 
   public:
