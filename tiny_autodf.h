@@ -42,11 +42,17 @@ class AutoDf
     /// Each AutoDf despite its AutoType has ID of this type
     using IdType = size_t;
 
+    /// Map of variables, allows their values to be modified
+    using Variables = std::unordered_map<IdType, std::shared_ptr<ScalarType>>;
+
+    /// Map of derivatives
+    using Derivatives = std::unordered_map<IdType, ScalarType>;
+
     /// Type for storing result of AutoDf formula evaluation
     struct Evaluation
     {
         ScalarType value;
-        std::unordered_map<IdType, ScalarType> derivatives;
+        Derivatives derivatives;
     };
 
     /// List of all implemented AutoDf variants and operations
@@ -72,6 +78,9 @@ class AutoDf
     ///  Latest assigned ID value
     static std::atomic<IdType> id_increment_;
 
+    /// Structure for building and storing main Call Graph
+    /// Each AutoDf has one corresponding shared_ptr CallGraphNode, but it's not necessary that each CallGraphNode
+    /// instance has corresponding AutoDf
     struct CallGraphNode
     {
         IdType ID{};
@@ -79,8 +88,14 @@ class AutoDf
         size_t count{};
         std::shared_ptr<CallGraphNode> left{};
         std::shared_ptr<CallGraphNode> right{};
+
+        /// Current value of the Node (and corresponding AutoDf, if any)
+        /// For constants and variables it's always their latest,
+        /// For other types it's their last known value (updated after eval())
         std::shared_ptr<ScalarType> value{};
-        std::unordered_map<size_t, std::shared_ptr<ScalarType>> variables{};
+
+        /// List of values of AutoDf Variables, which current node depends on
+        Variables variables{};
 
         CallGraphNode(const AutoType Type, const ScalarType& value_ = static_cast<ScalarType>(0.))
             : ID(id_increment_++), type(Type)
@@ -89,7 +104,7 @@ class AutoDf
             count = 1;
         }
 
-        /// Evaluation of call-graph,
+        /// Evaluation of call-graph
         /// @returns evaluated value & values of derivatives
         Evaluation eval()
         {
@@ -343,7 +358,7 @@ class AutoDf
         node_ = std::make_shared<CallGraphNode>(type, value);
         node_->left = left;
         node_->right = right;
-        node_->count = 0U;
+        node_->count = 0U; //ToDo: shall it be 1 here?
         if (left)
         {
             node_->count += left->count;
@@ -363,12 +378,15 @@ class AutoDf
     /// Read-only ID value, could be used to distinguish partial derivative of this variable
     IdType ID() const { return node_->ID; }
 
+    /// @returns number of nodes in the call-graph of this AutoDf
     size_t count() const { return node_->count; }
 
-    /// Explicitly set what type of AutoDf will be created by-default
-    static void StartConstants(const bool need_constant = true) { create_variables_ = !(need_constant); }
+    /// All manually-created AutoDfs, after calling this function will be Consts
+    static void StartConstants() { create_variables_ = false; }
 
-    static void StartVariables(const bool need_variable = true) { create_variables_ = need_variable; }
+    /// All manually-created AutoDfs, after calling this function will be Variables
+    /// This behaviour is enabled by-default
+    static void StartVariables() { create_variables_ = true; }
 
     /// Creates kVariableType or kConstType (depending on default_type_) with zero value
     AutoDf()
@@ -384,32 +402,36 @@ class AutoDf
         }
     }
 
-    /// Creates kVariableType or kConstType (depending on default_type_) with specified value
+    /// Ctor with underlying type valued argument
+    /// Creates kVariableType or kConstType (depending on create_variables_) with given scalar value
     AutoDf(const ScalarType& scalar)
     {
-        if (!create_variables_ && scalar == static_cast<ScalarType>(0))
+        if (create_variables_ )
         {
-            // avoid creation trivial const-type node
-            node_ = zero_;
+            node_ = std::make_shared<CallGraphNode>(AutoType::kVariableType, scalar);
+            node_->variables[node_->ID] = node_->value;
         }
         else
         {
-            const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
-            node_ = std::make_shared<CallGraphNode>(default_type, scalar);
-            if (default_type == AutoType::kVariableType)
+            if(scalar == static_cast<ScalarType>(0.0))
             {
-                node_->variables[node_->ID] = node_->value;
+                // avoid creation trivial const type node, by re-using zero-valued one
+                node_ = zero_;
+            }
+            else
+            {
+                node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, scalar);
             }
         }
     }
 
-    /// Copy-Constructor, re-uses computation graph node
+    /// Copy-Constructor. Re-uses call-graph node
     AutoDf(const AutoDf<ScalarType>& other) { node_ = other.node_; }
 
-    /// Additional way to create AutoDf of specified type
-    AutoDf(const ScalarType& value, const bool is_const)
+    /// Additional way to create AutoDf of required type
+    AutoDf(const ScalarType& value, const bool non_mutable)
     {
-        const auto type = (is_const ? AutoType::kConstType : AutoType::kVariableType);
+        const auto type = (non_mutable ? AutoType::kConstType : AutoType::kVariableType);
         node_ = std::make_shared<CallGraphNode>(type, value);
         if (node_->type == AutoType::kVariableType)
         {
@@ -417,16 +439,13 @@ class AutoDf
         }
     }
 
+    /// Assignment operator for underlying type value
     AutoDf& operator=(const ScalarType& scalar)
     {
         if (node_ == zero_ && scalar != ScalarType(0))
         {
-            const auto default_type = create_variables_ ? AutoType::kVariableType : AutoType::kConstType;
-            node_ = std::make_shared<CallGraphNode>(default_type, scalar);
-            if (default_type == AutoType::kVariableType)
-            {
-                node_->variables[node_->ID] = node_->value;
-            }
+            // no longer may use zero_, so create new Const node
+            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, scalar);
         }
         else if (node_->type == AutoType::kConstType || node_->type == AutoType::kVariableType)
         {
@@ -435,15 +454,17 @@ class AutoDf
         return *this;
     }
 
+    /// Copy-Assignment. Re-uses call-graph node
     AutoDf<ScalarType>& operator=(const AutoDf<ScalarType>& other)
     {
         node_ = other.node_;
         return *this;
     }
 
-    /// List of input "mutable" values, contributing to this AutoDf value
-    std::unordered_map<size_t, std::shared_ptr<ScalarType>>& variables() const { return node_->variables; }
+    /// @returns List of values of AutoDf Variables contributing to this AutoDf value
+    Variables variables() const { return node_->variables; }
 
+    /// Evaluates current value and gradients of the AutoDf for current state of call-graph and Variable values
     Evaluation eval() const { return node_->eval(); }
 
     /// @returns latest calculated value or sets new one (but only for variables)
@@ -457,24 +478,28 @@ class AutoDf
         else
         {
             // prohibit exposing real value if this node is not of the variable type
-            static ScalarType fake_value = ScalarType(0);
+            // however we may not expose local variable either, so we have some static fake thingy
+            static ScalarType fake_value = ScalarType(0.0);
             fake_value = *node_->value;
             return fake_value;
         }
     }
 
+    /// Another way to obtain current node value
     explicit operator ScalarType() const { return *node_->value; }
 
+    /// In-place addition with underlying type argument
     AutoDf<ScalarType>& operator+=(const ScalarType value)
     {
-        // avoid creation graph nodes, when not really needed
-        // (adding with const zero wont change anything)
-        if (value == static_cast<ScalarType>(0))
+        if (value == static_cast<ScalarType>(0.0))
         {
+            // avoid creation graph nodes, when not really needed
+            // (adding with const zero wont change anything)
             return *this;
         }
         else if (node_ == zero_)
         {
+            // no longer may re-use zero_ node, so have to create specific const node
             node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, value);
             return *this;
         }
@@ -491,9 +516,9 @@ class AutoDf
 
     AutoDf<ScalarType>& operator+=(const AutoDf<ScalarType>& other)
     {
-        // avoid creation graph nodes, when not really needed
         if (other.node_->type == AutoType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
         {
+            // avoid creation graph nodes, when not really needed
             return *this;
         }
         else if (node_->type == AutoType::kConstType && other.node_->type == AutoType::kConstType)
@@ -508,9 +533,9 @@ class AutoDf
 
     AutoDf<ScalarType>& operator-=(const ScalarType value)
     {
-        // avoid creating graph nodes, when not really needed
         if (value == static_cast<ScalarType>(0))
         {
+            // avoid creating graph nodes, when not really needed
             return *this;
         }
         else if (node_->type == AutoType::kConstType)
