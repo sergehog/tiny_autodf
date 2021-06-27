@@ -3,5 +3,8 @@ project(tiny_autodf)
 
 set(CMAKE_CXX_STANDARD 14)
 
+add_library(${PROJECT_NAME} INTERFACE)
+target_include_directories(${PROJECT_NAME} INTERFACE .)
+
 enable_testing()
 add_subdirectory(test)
