@@ -358,7 +358,7 @@ class AutoDf
         node_ = std::make_shared<CallGraphNode>(type, value);
         node_->left = left;
         node_->right = right;
-        node_->count = 0U; //ToDo: shall it be 1 here?
+        node_->count = 0U;  // ToDo: shall it be 1 here?
         if (left)
         {
             node_->count += left->count;
@@ -406,14 +406,14 @@ class AutoDf
     /// Creates kVariableType or kConstType (depending on create_variables_) with given scalar value
     AutoDf(const ScalarType& scalar)
     {
-        if (create_variables_ )
+        if (create_variables_)
         {
             node_ = std::make_shared<CallGraphNode>(AutoType::kVariableType, scalar);
             node_->variables[node_->ID] = node_->value;
         }
         else
         {
-            if(scalar == static_cast<ScalarType>(0.0))
+            if (scalar == static_cast<ScalarType>(0.0))
             {
                 // avoid creation trivial const type node, by re-using zero-valued one
                 node_ = zero_;
