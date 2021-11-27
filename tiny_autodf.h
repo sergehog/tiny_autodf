@@ -1,5 +1,5 @@
 /*
- * This file is part of the Tiny-DF distribution (https://github.com/sergehog/tiny_df)
+ * This file is part of the Tiny-AutoDf distribution (https://github.com/sergehog/tiny_autodf)
  * Copyright (c) 2020-2021 Sergey Smirnov / Seregium Oy.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
@@ -35,11 +35,17 @@
 namespace tiny_autodf
 {
 
-template <typename ScalarType = float>
+template <typename ScalarType>
+class AutoDf;
+
+template <typename ScalarType>
+std::ostream& operator<<(std::ostream& os, const AutoDf<ScalarType>& value);
+
+template <typename ScalarType>
 class AutoDf
 {
   public:
-    /// Each AutoDf despite its AutoType has ID of this type
+    /// Each AutoDf despite its Type has ID of this type
     using IdType = size_t;
 
     /// Map of variables, allows their values to be modified
@@ -51,19 +57,21 @@ class AutoDf
     /// Type for storing result of AutoDf formula evaluation
     struct Evaluation
     {
+        operator ScalarType() { return value; }
         ScalarType value;
         Derivatives derivatives;
     };
 
+  private:
     /// List of all implemented AutoDf variants and operations
-    enum class AutoType
+    enum class AutoDfType
     {
         kConstType,     /// just a const, cannot be changed
-        kVariableType,  /// input variable, may be assigned/changed
+        kVariableType,  /// variable, may be assigned/changed
         kSumType,       /// result of sum of two input AutoDfs
         kSubtractType,  /// result of subtract of two input AutoDfs
         kMultType,      /// result of multiplication of two input AutoDfs
-        kDivType,       /// result of divition of two input AutoDfs
+        kDivType,       /// result of division of two input AutoDfs
         kAbsType,       /// absolute value of one input AutoDf
         kMaxType,       /// maximum value among two input AutoDfs
         kMinType,       /// minumum value among two input AutoDfs
@@ -71,21 +79,22 @@ class AutoDf
         kCosType        /// cos() value of one input AutoDf
     };
 
-  private:
     /// If bulk creation of Variables is enabled, it keeps corresponding value
     static std::atomic<bool> create_variables_;
 
     ///  Latest assigned ID value
     static std::atomic<IdType> id_increment_;
 
+  protected:
     /// Structure for building and storing main Call Graph
     /// Each AutoDf has one corresponding shared_ptr CallGraphNode, but it's not necessary that each CallGraphNode
     /// instance has corresponding AutoDf
     struct CallGraphNode
     {
         IdType ID{};
-        AutoType type{};
+        AutoDfType type{};
         size_t count{};
+        std::string name;
         std::shared_ptr<CallGraphNode> left{};
         std::shared_ptr<CallGraphNode> right{};
 
@@ -95,9 +104,10 @@ class AutoDf
         std::shared_ptr<ScalarType> value{};
 
         /// List of values of AutoDf Variables, which current node depends on
-        Variables variables{};
+        using InternalVariables = std::unordered_map<IdType, std::shared_ptr<ScalarType>>;
+        InternalVariables variables{};
 
-        CallGraphNode(const AutoType Type, const ScalarType& value_ = static_cast<ScalarType>(0.))
+        CallGraphNode(const AutoDfType Type, const ScalarType& value_ = static_cast<ScalarType>(0.))
             : ID(id_increment_++), type(Type)
         {
             value = std::make_shared<ScalarType>(value_);
@@ -110,27 +120,27 @@ class AutoDf
         {
             switch (type)
             {
-                case AutoType::kConstType:
+                case AutoDfType::kConstType:
                     return evalConst();
-                case AutoType::kVariableType:
+                case AutoDfType::kVariableType:
                     return evalVariable();
-                case AutoType::kSumType:
+                case AutoDfType::kSumType:
                     return evalSum();
-                case AutoType::kSubtractType:
+                case AutoDfType::kSubtractType:
                     return evalSubtract();
-                case AutoType::kMultType:
+                case AutoDfType::kMultType:
                     return evalMult();
-                case AutoType::kDivType:
+                case AutoDfType::kDivType:
                     return evalDiv();
-                case AutoType::kAbsType:
+                case AutoDfType::kAbsType:
                     return evalAbs();
-                case AutoType::kMaxType:
+                case AutoDfType::kMaxType:
                     return evalMax();
-                case AutoType::kMinType:
+                case AutoDfType::kMinType:
                     return evalMin();
-                case AutoType::kSinType:
+                case AutoDfType::kSinType:
                     return evalSin();
-                case AutoType::kCosType:
+                case AutoDfType::kCosType:
                 default:
                     return evalCos();
             }
@@ -340,17 +350,73 @@ class AutoDf
 
             return result;
         }
+
+        std::ostream& print(std::ostream& stream)
+        {
+            switch (type)
+            {
+                case AutoDfType::kVariableType:
+                    stream << name;
+                    break;
+                case AutoDfType::kSumType:
+                    stream << "(";
+                    left->print(stream) << " + ";
+                    right->print(stream) << ")";
+                    break;
+                case AutoDfType::kSubtractType:
+                    stream << "(";
+                    left->print(stream) << " - ";
+                    right->print(stream) << ")";
+                    break;
+                case AutoDfType::kMultType:
+                    left->print(stream) << "*";
+                    right->print(stream);
+                    break;
+                case AutoDfType::kDivType:
+                    stream << "(";
+                    left->print(stream) << ") / (";
+                    right->print(stream) << ")";
+                    break;
+                case AutoDfType::kAbsType:
+                    stream << "abs(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kMaxType:
+                    stream << "max(";
+                    left->print(stream) << ",";
+                    right->print(stream) << ")";
+                    break;
+                case AutoDfType::kMinType:
+                    stream << "min(";
+                    left->print(stream) << ",";
+                    right->print(stream) << ")";
+                    break;
+                case AutoDfType::kSinType:
+                    stream << "sin(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kCosType:
+                    stream << "cos(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kConstType:
+                default:
+                    stream << *value;
+            }
+            return stream;
+        }
     };
 
     /// Graph Node belonging to current variable / AutoDf instance
     std::shared_ptr<CallGraphNode> node_{};
 
+  private:
     /// In order not to multiply zero-valued ConstType nodes, we maintain single such node and re-use
     /// Reduces memory-consumption as well unpredictable id_increment grow
     static const std::shared_ptr<CallGraphNode> zero_;
 
     /// Creates AutoDf of specified type, and takes their ownership if needed
-    AutoDf(const AutoType type,
+    AutoDf(const AutoDfType type,
            const std::shared_ptr<CallGraphNode>& left,
            const std::shared_ptr<CallGraphNode>& right,
            const ScalarType& value = static_cast<ScalarType>(0.))
@@ -372,7 +438,7 @@ class AutoDf
     }
 
     /// private Ctor for manual node setup
-    AutoDf(const std::shared_ptr<CallGraphNode>& node_in) : node_(node_in) {}
+    explicit AutoDf(const std::shared_ptr<CallGraphNode>& node_in) : node_(node_in) {}
 
   public:
     /// Read-only ID value, could be used to distinguish partial derivative of this variable
@@ -381,25 +447,52 @@ class AutoDf
     /// @returns number of nodes in the call-graph of this AutoDf
     size_t count() const { return node_->count; }
 
-    /// All manually-created AutoDfs, after calling this function will be Consts
-    static void StartConstants() { create_variables_ = false; }
+    std::string& name() { return node_->name; }
 
-    /// All manually-created AutoDfs, after calling this function will be Variables
+    std::string name() const { return node_->name; }
+
+    /// All AutoDfs created with default constructor will be Consts after calling this function
+    static void ConstantsByDefault() { create_variables_ = false; }
+
+    /// All AutoDfs, created with default constructor will be Variables after calling this function
     /// This behaviour is enabled by-default
-    static void StartVariables() { create_variables_ = true; }
+    static void VariablesByDefault() { create_variables_ = true; }
 
     /// Creates kVariableType or kConstType (depending on default_type_) with zero value
     AutoDf()
     {
         if (create_variables_)
         {
-            node_ = std::make_shared<CallGraphNode>(AutoType::kVariableType);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kVariableType);
             node_->variables[node_->ID] = node_->value;
+            node_->name = "var" + std::to_string(node_->ID);
         }
         else
         {
             node_ = zero_;
         }
+    }
+
+    /// Creates named Variable
+    explicit AutoDf(const std::string name)
+    {
+        node_ = std::make_shared<CallGraphNode>(AutoDfType::kVariableType);
+        node_->variables[node_->ID] = node_->value;
+        node_->name = name;
+    }
+
+    /// Constructor with initializer_list always creates Variable
+    AutoDf(std::initializer_list<ScalarType> list)
+    {
+        node_ = std::make_shared<CallGraphNode>(AutoDfType::kVariableType);
+        node_->variables[node_->ID] = node_->value;
+        if (list.size() > 0)
+        {
+            auto it = list.begin();
+            *node_->value = ScalarType(*it);
+        }
+
+        node_->name = "var" + std::to_string(node_->ID);
     }
 
     /// Ctor with underlying type valued argument
@@ -408,7 +501,7 @@ class AutoDf
     {
         if (create_variables_)
         {
-            node_ = std::make_shared<CallGraphNode>(AutoType::kVariableType, scalar);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kVariableType, scalar);
             node_->variables[node_->ID] = node_->value;
         }
         else
@@ -420,7 +513,7 @@ class AutoDf
             }
             else
             {
-                node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, scalar);
+                node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, scalar);
             }
         }
     }
@@ -431,9 +524,9 @@ class AutoDf
     /// Additional way to create AutoDf of required type
     AutoDf(const ScalarType& value, const bool non_mutable)
     {
-        const auto type = (non_mutable ? AutoType::kConstType : AutoType::kVariableType);
+        const auto type = (non_mutable ? AutoDfType::kConstType : AutoDfType::kVariableType);
         node_ = std::make_shared<CallGraphNode>(type, value);
-        if (node_->type == AutoType::kVariableType)
+        if (node_->type == AutoDfType::kVariableType)
         {
             node_->variables[node_->ID] = node_->value;
         }
@@ -445,9 +538,9 @@ class AutoDf
         if (node_ == zero_ && scalar != ScalarType(0))
         {
             // no longer may use zero_, so create new Const node
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, scalar);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, scalar);
         }
-        else if (node_->type == AutoType::kConstType || node_->type == AutoType::kVariableType)
+        else if (node_->type == AutoDfType::kConstType || node_->type == AutoDfType::kVariableType)
         {
             *node_->value = scalar;
         }
@@ -461,17 +554,20 @@ class AutoDf
         return *this;
     }
 
-    /// @returns List of values of AutoDf Variables contributing to this AutoDf value
+    /// @returns List of values of AutoDf Variables contributing to this equation (AutoDf value), if any
     Variables variables() const { return node_->variables; }
 
     /// Evaluates current value and gradients of the AutoDf for current state of call-graph and Variable values
     Evaluation eval() const { return node_->eval(); }
 
+    /// Evaluates current value and gradients of the AutoDf for current state of call-graph and Variable values
+    Evaluation operator()() const { return node_->eval(); }
+
     /// @returns latest calculated value or sets new one (but only for variables)
     /// One may change underlying value directly
     ScalarType& value() const
     {
-        if (node_->type == AutoType::kVariableType)
+        if (node_->type == AutoDfType::kVariableType)
         {
             return *node_->value;
         }
@@ -500,35 +596,35 @@ class AutoDf
         else if (node_ == zero_)
         {
             // no longer may re-use zero_ node, so have to create specific const node
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, value);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, value);
             return *this;
         }
-        else if (node_->type == AutoType::kConstType)
+        else if (node_->type == AutoDfType::kConstType)
         {
             const ScalarType old_node_value = *node_->value;
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, old_node_value + value);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, old_node_value + value);
             return *this;
         }
 
         AutoDf<ScalarType> other(value, true);
-        return InPlaceOperator(AutoType::kSumType, other.node_, *node_->value + *other.node_->value);
+        return InPlaceOperator(AutoDfType::kSumType, other.node_, *node_->value + *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator+=(const AutoDf<ScalarType>& other)
     {
-        if (other.node_->type == AutoType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
+        if (other.node_->type == AutoDfType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
         {
             // avoid creation graph nodes, when not really needed
             return *this;
         }
-        else if (node_->type == AutoType::kConstType && other.node_->type == AutoType::kConstType)
+        else if (node_->type == AutoDfType::kConstType && other.node_->type == AutoDfType::kConstType)
         {
             const ScalarType node_value = *node_->value;
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value + *other.node_->value);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, node_value + *other.node_->value);
             return *this;
         }
 
-        return InPlaceOperator(AutoType::kSumType, other.node_, *node_->value + *other.node_->value);
+        return InPlaceOperator(AutoDfType::kSumType, other.node_, *node_->value + *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator-=(const ScalarType value)
@@ -538,58 +634,58 @@ class AutoDf
             // avoid creating graph nodes, when not really needed
             return *this;
         }
-        else if (node_->type == AutoType::kConstType)
+        else if (node_->type == AutoDfType::kConstType)
         {
             const ScalarType node_value = *node_->value;
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value - value);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, node_value - value);
             return *this;
         }
 
         AutoDf<ScalarType> other(value, true);
-        return InPlaceOperator(AutoType::kSubtractType, other.node_, *node_->value - *other.node_->value);
+        return InPlaceOperator(AutoDfType::kSubtractType, other.node_, *node_->value - *other.node_->value);
     }
 
     AutoDf<ScalarType>& operator-=(const AutoDf<ScalarType>& other)
     {
-        if (other.node_->type == AutoType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
+        if (other.node_->type == AutoDfType::kConstType && *other.node_->value == static_cast<ScalarType>(0))
         {
             return *this;
         }
-        else if (node_->type == AutoType::kConstType && other.node_->type == AutoType::kConstType)
+        else if (node_->type == AutoDfType::kConstType && other.node_->type == AutoDfType::kConstType)
         {
             const ScalarType node_value = *node_->value;
-            node_ = std::make_shared<CallGraphNode>(AutoType::kConstType, node_value - *other.node_->value);
+            node_ = std::make_shared<CallGraphNode>(AutoDfType::kConstType, node_value - *other.node_->value);
             return *this;
         }
 
-        return InPlaceOperator(AutoType::kSubtractType, other.node_, *node_->value - *other.node_->value);
+        return InPlaceOperator(AutoDfType::kSubtractType, other.node_, *node_->value - *other.node_->value);
     }
 
     static AutoDf<ScalarType> abs(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kAbsType, other.node_, nullptr, std::abs(*other.node_->value));
+        return AutoDf<ScalarType>(AutoDfType::kAbsType, other.node_, nullptr, std::abs(*other.node_->value));
     }
 
     static AutoDf<ScalarType> min(const AutoDf<ScalarType>& left, const AutoDf<ScalarType>& right)
     {
         return AutoDf<ScalarType>(
-            AutoType::kMinType, left.node_, right.node_, std::min(*left.node_->value, *right.node_->value));
+            AutoDfType::kMinType, left.node_, right.node_, std::min(*left.node_->value, *right.node_->value));
     }
 
     static AutoDf<ScalarType> max(const AutoDf<ScalarType>& left, const AutoDf<ScalarType>& right)
     {
         return AutoDf<ScalarType>(
-            AutoType::kMaxType, left.node_, right.node_, std::max(*left.node_->value, *right.node_->value));
+            AutoDfType::kMaxType, left.node_, right.node_, std::max(*left.node_->value, *right.node_->value));
     }
 
     static AutoDf<ScalarType> sin(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kSinType, other.node_, nullptr, std::sin(*other.node_->value));
+        return AutoDf<ScalarType>(AutoDfType::kSinType, other.node_, nullptr, std::sin(*other.node_->value));
     }
 
     static AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     {
-        return AutoDf<ScalarType>(AutoType::kCosType, other.node_, nullptr, std::cos(*other.node_->value));
+        return AutoDf<ScalarType>(AutoDfType::kCosType, other.node_, nullptr, std::cos(*other.node_->value));
     }
 
 #define AUTODF_DEFINE_OPERATOR(op)                                              \
@@ -610,7 +706,7 @@ class AutoDf
     friend AutoDf<T> operator-(AutoDf<T> const& other);
 
   private:
-    AutoDf<ScalarType>& InPlaceOperator(const AutoType& type,
+    AutoDf<ScalarType>& InPlaceOperator(const AutoDfType& type,
                                         const std::shared_ptr<CallGraphNode>& right_node,
                                         const ScalarType new_value)
     {
@@ -627,76 +723,84 @@ class AutoDf
     static AutoDf<ScalarType> make_sum(const std::shared_ptr<CallGraphNode>& left,
                                        const std::shared_ptr<CallGraphNode>& right)
     {
-        if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(0))
+        if (left->type == AutoDfType::kConstType && *left->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(right);
         }
-        if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(0))
+        if (right->type == AutoDfType::kConstType && *right->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(left);
         }
 
         const ScalarType value = *left->value + *right->value;
-        return AutoDf<ScalarType>(AutoType::kSumType, left, right, value);
+        return AutoDf<ScalarType>(AutoDfType::kSumType, left, right, value);
     }
 
     static AutoDf<ScalarType> make_sub(const std::shared_ptr<CallGraphNode>& left,
                                        const std::shared_ptr<CallGraphNode>& right)
     {
-        if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(0))
+        if (right->type == AutoDfType::kConstType && *right->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(left);
         }
 
         const ScalarType value = *left->value - *right->value;
-        return AutoDf<ScalarType>(AutoType::kSubtractType, left, right, value);
+        return AutoDf<ScalarType>(AutoDfType::kSubtractType, left, right, value);
     }
 
     static AutoDf<ScalarType> make_mult(const std::shared_ptr<CallGraphNode>& left,
                                         const std::shared_ptr<CallGraphNode>& right)
     {
-        if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(0))
+        if (left->type == AutoDfType::kConstType && *left->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(zero_);
         }
-        if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(0))
+        if (right->type == AutoDfType::kConstType && *right->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(zero_);
         }
-        if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(1))
+        if (left->type == AutoDfType::kConstType && *left->value == static_cast<ScalarType>(1))
         {
             return AutoDf<ScalarType>(right);
         }
-        if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(1))
+        if (right->type == AutoDfType::kConstType && *right->value == static_cast<ScalarType>(1))
         {
             return AutoDf<ScalarType>(left);
         }
 
         const ScalarType value = *left->value * *right->value;
-        return AutoDf<ScalarType>(AutoType::kMultType, left, right, value);
+        return AutoDf<ScalarType>(AutoDfType::kMultType, left, right, value);
     }
 
     static AutoDf<ScalarType> make_div(const std::shared_ptr<CallGraphNode>& left,
                                        const std::shared_ptr<CallGraphNode>& right)
     {
-        if (left->type == AutoType::kConstType && *left->value == static_cast<ScalarType>(0))
+        if (left->type == AutoDfType::kConstType && *left->value == static_cast<ScalarType>(0))
         {
             return AutoDf<ScalarType>(zero_);
         }
-        if (right->type == AutoType::kConstType && *right->value == static_cast<ScalarType>(1))
+        if (right->type == AutoDfType::kConstType && *right->value == static_cast<ScalarType>(1))
         {
             return AutoDf<ScalarType>(left);
         }
 
         const ScalarType value = *left->value / *right->value;
-        return AutoDf<ScalarType>(AutoType::kDivType, left, right, value);
+        return AutoDf<ScalarType>(AutoDfType::kDivType, left, right, value);
     }
+
+    friend std::ostream& operator<<<>(std::ostream& os, const AutoDf<ScalarType>& value);
 };
+
+template <>
+std::ostream& operator<<<>(std::ostream& os, const AutoDf<float>& value)
+{
+    return value.node_->print(os);
+}
 
 template <typename ScalarType>
 AutoDf<ScalarType> operator-(AutoDf<ScalarType> const& other)
 {
-    if (other.node_->type == AutoDf<ScalarType>::AutoType::kConstType)
+    if (other.node_->type == AutoDf<ScalarType>::AutoDfType::kConstType)
     {
         return AutoDf<ScalarType>(-other.value(), true);
     }
@@ -777,15 +881,16 @@ AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     return AutoDf<ScalarType>::cos(other);
 }
 
-#define AUTODF_INSTANTIATE_TYPE(typename)                                                      \
-    template <>                                                                                \
-    std::atomic<bool> AutoDf<typename>::create_variables_{true};                               \
-    template <>                                                                                \
-    std::atomic<AutoDf<typename>::IdType> AutoDf<typename>::id_increment_{0U};                 \
-    template <>                                                                                \
-    const std::shared_ptr<AutoDf<typename>::CallGraphNode> AutoDf<typename>::zero_ =           \
-        std::make_shared<AutoDf<typename>::CallGraphNode>(AutoType::kConstType, typename(0.)); \
+#define AUTODF_INSTANTIATE_TYPE(typename)                                                        \
+    template <>                                                                                  \
+    std::atomic<bool> AutoDf<typename>::create_variables_{true};                                 \
+    template <>                                                                                  \
+    std::atomic<AutoDf<typename>::IdType> AutoDf<typename>::id_increment_{0U};                   \
+    template <>                                                                                  \
+    const std::shared_ptr<AutoDf<typename>::CallGraphNode> AutoDf<typename>::zero_ =             \
+        std::make_shared<AutoDf<typename>::CallGraphNode>(AutoDfType::kConstType, typename(0.)); \
     AutoDf<typename> ____instantiate_AutoDf_##typename;
+// friend std::ostream& operator<< <>(std::ostream& os, const AutoDf<typename> & value)
 
 #ifndef AUTODF_DONT_INSTANTIATE_FLOAT
 AUTODF_INSTANTIATE_TYPE(float);
@@ -815,6 +920,7 @@ typename AutoDf<ScalarType>::Evaluation GradientDescent(
     const ScalarType initial_step = ScalarType(0.01),
     const std::size_t max_iterations = 100U)
 {
+    using IdType = typename AutoDf<ScalarType>::IdType;
     auto prev_error = minimize_expression.eval();
     const bool termination_criteria_met = (!std::isnan(termination_criteria.expression_less_than)) &&
                                           (prev_error.value < termination_criteria.expression_less_than);
@@ -827,7 +933,7 @@ typename AutoDf<ScalarType>::Evaluation GradientDescent(
     std::cout << "0: (initial) F[.]=" << prev_error.value << std::endl;
 
     // store previous variable values
-    std::unordered_map<size_t, float> prev_values{};
+    std::unordered_map<IdType, float> prev_values{};
     for (auto value_pair : minimize_expression.variables())
     {
         prev_values[value_pair.first] = *value_pair.second;

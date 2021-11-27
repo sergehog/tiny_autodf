@@ -1,5 +1,5 @@
 /*
- * This file is part of the Tiny-DF distribution (https://github.com/sergehog/tiny_df)
+ * This file is part of the Tiny-AutoDf distribution (https://github.com/sergehog/tiny_autodf)
  * Copyright (c) 2020-2021 Sergey Smirnov / Seregium Oy.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
@@ -23,15 +23,15 @@ using Float = tiny_autodf::AutoDf<float>;
 
 TEST(AutoDfTest, BasicTest)
 {
-    Float x = 11.F;
-    Float y = x + 5.F;
-    EXPECT_EQ(x.value(), 11.f);
-    EXPECT_EQ(y.value(), 16.f);
-
-    x.value() = 10.F;
-    EXPECT_EQ(y.value(), 16.f);  // value of y has not changed yet
-    EXPECT_EQ(y.eval().value, 15.F);
-    EXPECT_EQ(y.value(), 15.f);  // after eval value has updated
+    Float x("x");
+    Float y = x * x + 2.F * x + 5.F;
+    EXPECT_EQ(x.value(), 0.f);
+    EXPECT_EQ(y.value(), 5.f);
+    std::cout << y << "=" << y() << std::endl;
+    x = 1;
+    EXPECT_EQ(float(y()), 8.f);
+    auto z = 0.F - abs(max(y / x, min(sin(x), cos(x))));
+    std::cout << "z=" << z << " = " << z() << std::endl;
 }
 
 TEST(AutoDfTest, OneDependentVariableTest)
