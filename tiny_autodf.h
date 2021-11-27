@@ -76,7 +76,8 @@ class AutoDf
         kMaxType,       /// maximum value among two input AutoDfs
         kMinType,       /// minumum value among two input AutoDfs
         kSinType,       /// sin() value of one input AutoDf
-        kCosType        /// cos() value of one input AutoDf
+        kCosType,       /// cos() value of one input AutoDf
+        kAtan2Type      /// atan2(y,x)
     };
 
     /// If bulk creation of Variables is enabled, it keeps corresponding value
@@ -120,8 +121,6 @@ class AutoDf
         {
             switch (type)
             {
-                case AutoDfType::kConstType:
-                    return evalConst();
                 case AutoDfType::kVariableType:
                     return evalVariable();
                 case AutoDfType::kSumType:
@@ -141,8 +140,12 @@ class AutoDf
                 case AutoDfType::kSinType:
                     return evalSin();
                 case AutoDfType::kCosType:
-                default:
                     return evalCos();
+                case AutoDfType::kAtan2Type:
+                    return evalAtan2();
+                case AutoDfType::kConstType:
+                default:
+                    return evalConst();
             }
         }
 
@@ -266,6 +269,35 @@ class AutoDf
                 result.derivatives[id] += dx * left_eval.value;
             }
 
+            return result;
+        }
+
+        Evaluation evalAtan2()
+        {
+            const auto y_eval = left->eval();
+            const auto x_eval = right->eval();
+            const ScalarType y = y_eval.value;
+            const ScalarType x = x_eval.value;
+            ;
+            // f(y(t), x(k)) = atan2(y(t), x(k))
+            Evaluation result{std::atan2(y, x), {}};
+            *value = result.value;
+
+            // df(..)/dy(t) = x(k) / (x^2(k) + y^2(t))
+            for (auto dy_iter : y_eval.derivatives)  // dy
+            {
+                const IdType id = dy_iter.first;
+                const ScalarType dy = dy_iter.second;
+                result.derivatives[id] += dy * x / (y * y + x * x);
+            }
+
+            // df(..)/dx(k) = - y(t) / (x^2(k) - y^2(t))
+            for (auto dx_iter : x_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] -= dx * y / (y * y + x * x);
+            }
             return result;
         }
 
@@ -399,6 +431,12 @@ class AutoDf
                     stream << "cos(";
                     left->print(stream) << ")";
                     break;
+                case AutoDfType::kAtan2Type:
+                    stream << "atan2(";
+                    left->print(stream) << ",";
+                    right->print(stream) << ")";
+                    break;
+
                 case AutoDfType::kConstType:
                 default:
                     stream << *value;
@@ -688,6 +726,12 @@ class AutoDf
         return AutoDf<ScalarType>(AutoDfType::kCosType, other.node_, nullptr, std::cos(*other.node_->value));
     }
 
+    static AutoDf<ScalarType> atan2(const AutoDf<ScalarType>& y, const AutoDf<ScalarType>& x)
+    {
+        return AutoDf<ScalarType>(
+            AutoDfType::kAtan2Type, y.node_, x.node_, std::atan2(*y.node_->value, *x.node_->value));
+    }
+
 #define AUTODF_DEFINE_OPERATOR(op)                                              \
     template <typename T>                                                       \
     friend AutoDf<T> operator op(const AutoDf<T>& other, const T scalar_value); \
@@ -788,6 +832,7 @@ class AutoDf
         return AutoDf<ScalarType>(AutoDfType::kDivType, left, right, value);
     }
 
+  public:
     friend std::ostream& operator<<<>(std::ostream& os, const AutoDf<ScalarType>& value);
 };
 
@@ -860,6 +905,7 @@ AUTODF_DEFINE_OPERATOR(/, make_div);
 /// Definition of some functions
 AUTODF_DEFINE_FUNCTION(min);
 AUTODF_DEFINE_FUNCTION(max);
+AUTODF_DEFINE_FUNCTION(atan2);
 #undef AUTODF_DEFINE_FUNCTION
 
 /// Functions of 1 argument do not require macros

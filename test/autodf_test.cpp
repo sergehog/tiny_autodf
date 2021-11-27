@@ -337,3 +337,35 @@ TEST(AutoDfTest, GradientDescentTest)
     EXPECT_NEAR(result.value, 0.062334731, 1e-5);
     EXPECT_NEAR(x.value(), -0.2522214055, 1e-5);
 }
+
+TEST(AutoDfTest, Atan2Test)
+{
+    Float x = 0.F;
+    Float y = 1.0F;
+    auto val = atan2(y, x);
+    EXPECT_NEAR(val().value, M_PI_2, 1e-5);
+    EXPECT_NEAR(val().derivatives[x.ID()], -1.F, 1e-5);
+    EXPECT_NEAR(val().derivatives[y.ID()], 0.F, 1e-5);
+
+    y = 2.0F;
+    EXPECT_NEAR(val().value, M_PI_2, 1e-5);
+    EXPECT_NEAR(val().derivatives[x.ID()], -0.5F, 1e-5);
+    EXPECT_NEAR(val().derivatives[y.ID()], 0.F, 1e-5);
+
+    y = -1.0F;
+    EXPECT_NEAR(val().value, -M_PI_2, 1e-5);
+    EXPECT_NEAR(val().derivatives[x.ID()], 1.F, 1e-5);
+    EXPECT_NEAR(val().derivatives[y.ID()], 0.F, 1e-5);
+
+    x = 1.F;
+    y = 1.F;
+    EXPECT_NEAR(val().value, M_PI_4, 1e-5);
+    EXPECT_NEAR(val().derivatives[x.ID()], -0.5, 1e-5);
+    EXPECT_NEAR(val().derivatives[y.ID()], 0.5F, 1e-5);
+
+    x = -1.F;
+    y = -1.F;
+    EXPECT_NEAR(val().value, -M_PI_2 - M_PI_4, 1e-5);
+    EXPECT_NEAR(val().derivatives[x.ID()], 0.5, 1e-5);
+    EXPECT_NEAR(val().derivatives[y.ID()], -0.5F, 1e-5);
+}
