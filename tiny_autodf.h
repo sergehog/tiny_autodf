@@ -75,9 +75,14 @@ class AutoDf
         kAbsType,       /// absolute value of one input AutoDf
         kMaxType,       /// maximum value among two input AutoDfs
         kMinType,       /// minumum value among two input AutoDfs
-        kSinType,       /// sin() value of one input AutoDf
-        kCosType,       /// cos() value of one input AutoDf
-        kAtan2Type      /// atan2(y,x)
+        kAtan2Type,     /// atan2(y,x)
+        kSinType,       /// sin(x) value of one input AutoDf
+        kCosType,       /// cos(x) value of one input AutoDf
+        kSqrtType,      /// sqrt(x)
+        kLogType,       /// log(x) natural logarithm
+        kLog10Type,     /// log10(x) logarithm
+        kExpType,       /// exp(x) -> e^x
+        // kPowType        /// pow(x, n) -> x^n
     };
 
     /// If bulk creation of Variables is enabled, it keeps corresponding value
@@ -143,6 +148,16 @@ class AutoDf
                     return evalCos();
                 case AutoDfType::kAtan2Type:
                     return evalAtan2();
+                case AutoDfType::kSqrtType:
+                    return evalSqrt();
+                case AutoDfType::kLogType:
+                    return evalLog();
+                case AutoDfType::kLog10Type:
+                    return evalLog10();
+                case AutoDfType::kExpType:
+                    return evalExp();
+                    //                case AutoDfType::kPowType:
+                    //                    return evalPow();
                 case AutoDfType::kConstType:
                 default:
                     return evalConst();
@@ -205,6 +220,81 @@ class AutoDf
             }
             return result;
         }
+
+        Evaluation evalSqrt()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::sqrt(left_eval.value)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = ScalarType(0.5) * dx / result.value;
+            }
+            return result;
+        }
+
+        Evaluation evalLog()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::log(left_eval.value)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = dx / left_eval.value;
+            }
+            return result;
+        }
+
+        Evaluation evalLog10()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::log10(left_eval.value)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = dx / (left_eval.value * std::log(ScalarType(10.)));
+            }
+            return result;
+        }
+
+        Evaluation evalExp()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{std::exp(left_eval.value)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = result.value * dx;
+            }
+            return result;
+        }
+
+        //        Evaluation evalPow()
+        //        {
+        //            const auto left_eval = left->eval();
+        //            Evaluation result{std::exp(left_eval.value)};
+        //            *value = result.value;
+        //
+        //            for (auto dx_iter : left_eval.derivatives)
+        //            {
+        //                const IdType id = dx_iter.first;
+        //                const ScalarType dx = dx_iter.second;
+        //                result.derivatives[id] = result.value * dx;
+        //            }
+        //            return result;
+        //        }
 
         Evaluation evalSum()
         {
@@ -278,8 +368,6 @@ class AutoDf
             const auto x_eval = right->eval();
             const ScalarType y = y_eval.value;
             const ScalarType x = x_eval.value;
-            ;
-            // f(y(t), x(k)) = atan2(y(t), x(k))
             Evaluation result{std::atan2(y, x), {}};
             *value = result.value;
 
@@ -435,6 +523,22 @@ class AutoDf
                     stream << "atan2(";
                     left->print(stream) << ",";
                     right->print(stream) << ")";
+                    break;
+                case AutoDfType::kSqrtType:
+                    stream << "sqrt(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kLogType:
+                    stream << "log(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kLog10Type:
+                    stream << "log10(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kExpType:
+                    stream << "exp(";
+                    left->print(stream) << ")";
                     break;
 
                 case AutoDfType::kConstType:
@@ -598,8 +702,8 @@ class AutoDf
     /// Evaluates current value and gradients of the AutoDf for current state of call-graph and Variable values
     Evaluation eval() const { return node_->eval(); }
 
-    /// Evaluates current value and gradients of the AutoDf for current state of call-graph and Variable values
-    Evaluation operator()() const { return node_->eval(); }
+    /// Returns current value
+    ScalarType operator()() const { return *node_->value; }
 
     /// @returns latest calculated value or sets new one (but only for variables)
     /// One may change underlying value directly
@@ -724,6 +828,26 @@ class AutoDf
     static AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     {
         return AutoDf<ScalarType>(AutoDfType::kCosType, other.node_, nullptr, std::cos(*other.node_->value));
+    }
+
+    static AutoDf<ScalarType> sqrt(const AutoDf<ScalarType>& other)
+    {
+        return AutoDf<ScalarType>(AutoDfType::kSqrtType, other.node_, nullptr, std::sqrt(*other.node_->value));
+    }
+
+    static AutoDf<ScalarType> log(const AutoDf<ScalarType>& other)
+    {
+        return AutoDf<ScalarType>(AutoDfType::kLogType, other.node_, nullptr, std::log(*other.node_->value));
+    }
+
+    static AutoDf<ScalarType> log10(const AutoDf<ScalarType>& other)
+    {
+        return AutoDf<ScalarType>(AutoDfType::kLog10Type, other.node_, nullptr, std::log10(*other.node_->value));
+    }
+
+    static AutoDf<ScalarType> exp(const AutoDf<ScalarType>& other)
+    {
+        return AutoDf<ScalarType>(AutoDfType::kExpType, other.node_, nullptr, std::exp(*other.node_->value));
     }
 
     static AutoDf<ScalarType> atan2(const AutoDf<ScalarType>& y, const AutoDf<ScalarType>& x)
@@ -927,6 +1051,30 @@ AutoDf<ScalarType> cos(const AutoDf<ScalarType>& other)
     return AutoDf<ScalarType>::cos(other);
 }
 
+template <typename ScalarType>
+AutoDf<ScalarType> sqrt(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::sqrt(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> log(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::log(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> log10(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::log10(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> exp(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::exp(other);
+}
+
 #define AUTODF_INSTANTIATE_TYPE(typename)                                                        \
     template <>                                                                                  \
     std::atomic<bool> AutoDf<typename>::create_variables_{true};                                 \
@@ -959,6 +1107,10 @@ struct TerminationCriteria
 };
 
 /// Gradient Descent minimization algorithm
+/// @param minimize_expression AutoDf<> with the equation which need to be minimized
+/// @param termination_criteria
+/// @param initial_step aka learning rate, automatically adjusted
+/// @param max_iterations
 template <typename ScalarType>
 typename AutoDf<ScalarType>::Evaluation GradientDescent(
     const AutoDf<ScalarType>& minimize_expression,
@@ -967,67 +1119,90 @@ typename AutoDf<ScalarType>::Evaluation GradientDescent(
     const std::size_t max_iterations = 100U)
 {
     using IdType = typename AutoDf<ScalarType>::IdType;
-    auto prev_error = minimize_expression.eval();
+    auto previous_error = minimize_expression.eval();
     const bool termination_criteria_met = (!std::isnan(termination_criteria.expression_less_than)) &&
-                                          (prev_error.value < termination_criteria.expression_less_than);
+                                          (previous_error.value < termination_criteria.expression_less_than);
 
-    if (std::isnan(prev_error.value) || termination_criteria_met)
+    if (std::isnan(previous_error.value) || termination_criteria_met)
     {
-        return prev_error;
+        return previous_error;
     }
-
-    std::cout << "0: (initial) F[.]=" << prev_error.value << std::endl;
-
+#ifdef AUTODF_DEBUG_OUTPUT
+    std::cout << "0: (initial) F[.]=" << previous_error.value << std::endl;
+#endif
     // store previous variable values
-    std::unordered_map<IdType, float> prev_values{};
+    std::unordered_map<IdType, float> previous_values{};
     for (auto value_pair : minimize_expression.variables())
     {
-        prev_values[value_pair.first] = *value_pair.second;
+        previous_values[value_pair.first] = *value_pair.second;
     }
 
+    // adjustable learning rate
     ScalarType current_step = initial_step;
 
     for (size_t iter = 1U; iter < max_iterations; iter++)
     {
+#ifdef AUTODF_DEBUG_OUTPUT
         std::cout << iter << ": (rate=" << current_step << ") F[";
-
+#endif
+        // update current values
         for (auto value_pair : minimize_expression.variables())
         {
-            const ScalarType derivative = prev_error.derivatives[value_pair.first];
-            *value_pair.second = prev_values[value_pair.first] - derivative * current_step;
+            const ScalarType derivative = previous_error.derivatives[value_pair.first];
+            *value_pair.second = previous_values[value_pair.first] - derivative * current_step;
+#ifdef AUTODF_DEBUG_OUTPUT
             std::cout << *value_pair.second << ",";
+#endif
         }
 
+        // evaluate
         auto current_error = minimize_expression.eval();
+#ifdef AUTODF_DEBUG_OUTPUT
         std::cout << "] = " << current_error.value << std::endl;
-
+#endif
         const bool expression_criteria_met = (!std::isnan(termination_criteria.expression_less_than)) &&
                                              (current_error.value < termination_criteria.expression_less_than);
 
-        ScalarType error_diff = prev_error.value - current_error.value;
-        const bool diff_criteria_met =
-            (!std::isnan(termination_criteria.diff_less_than)) && (error_diff < termination_criteria.diff_less_than);
+        ScalarType error_diff = previous_error.value - current_error.value;
+        const bool diff_criteria_met = (!std::isnan(termination_criteria.diff_less_than)) && (error_diff > 0.) &&
+                                       (error_diff < termination_criteria.diff_less_than);
 
         if (expression_criteria_met || diff_criteria_met)
         {
             return current_error;
         }
 
-        // if error get worse -> "re-play" previous iteration with smaller step
-        if (current_error.value > prev_error.value)
+        // if error get worse -> restore previous values, and try again with smaller step
+        if (std::isnan(current_error.value) || current_error.value > previous_error.value)
         {
+            // restore values
+            for (auto value_pair : minimize_expression.variables())
+            {
+                *value_pair.second = previous_values[value_pair.first];
+            }
+
             // reduce step
             current_step /= 2.;
+
+            const bool step_criteria_met =
+                (std::isnan(current_step)) || ((!std::isnan(termination_criteria.step_less_than)) &&
+                                               (current_step < termination_criteria.step_less_than));
+
+            if (step_criteria_met)
+            {
+                return previous_error;
+            }
+
+            continue;
         }
         else
         {
-
             float dot_value = 0.F, norm_value = 0.F;
 
             for (auto value_pair : minimize_expression.variables())
             {
-                const ScalarType x_prev = prev_values[value_pair.first];
-                const ScalarType dx_prev = prev_error.derivatives[value_pair.first];
+                const ScalarType x_prev = previous_values[value_pair.first];
+                const ScalarType dx_prev = previous_error.derivatives[value_pair.first];
 
                 ScalarType x_curr = *value_pair.second;
                 const ScalarType dx_curr = current_error.derivatives[value_pair.first];
@@ -1036,33 +1211,20 @@ typename AutoDf<ScalarType>::Evaluation GradientDescent(
                 norm_value += (dx_curr - dx_prev) * (dx_curr - dx_prev);
 
                 // update previous values
-                prev_values[value_pair.first] = x_curr;
+                previous_values[value_pair.first] = x_curr;
             }
 
             current_step = std::abs(dot_value) / norm_value;
-            prev_error = current_error;
-        }
-
-        const bool step_criteria_met =
-            (!std::isnan(termination_criteria.step_less_than)) && (current_step < termination_criteria.step_less_than);
-
-        if (step_criteria_met)
-        {
-            // if current_step is getting too small -> restore previous values and return previuous error
-            for (auto value_pair : minimize_expression.variables())
-            {
-                *value_pair.second = prev_values[value_pair.first];
-            }
-            return prev_error;
+            previous_error = current_error;
         }
     }
 
     // return best known error
     for (auto value_pair : minimize_expression.variables())
     {
-        *value_pair.second = prev_values[value_pair.first];
+        *value_pair.second = previous_values[value_pair.first];
     }
-    return prev_error;
+    return previous_error;
 }
 //
 // template <typename ScalarType, std::size_t Size>
