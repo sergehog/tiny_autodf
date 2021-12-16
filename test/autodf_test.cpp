@@ -373,3 +373,17 @@ TEST(AutoDfTest, Atan2Test)
     EXPECT_NEAR(e.derivatives[x.ID()], 0.5, 1e-5);
     EXPECT_NEAR(e.derivatives[y.ID()], -0.5F, 1e-5);
 }
+
+TEST(AutoDfTest, TestAll)
+{
+    Float x(1.F, false);
+    Float y = max(elu(lrelu(relu(pow2(x)))), x);
+    Float z = sqrt(y) + log(y) + log10(y) + exp(x) + elu(x) + lrelu(x);
+    Float w = elu(x) + lrelu(x);
+    EXPECT_EQ(y(), 1.F);
+    EXPECT_EQ(y.eval().value, 1.F);
+    EXPECT_GT(z.eval().value, 5.F);
+    EXPECT_EQ(w.eval().value, 2.F);
+    w += z;
+    EXPECT_GT(w.eval().value, 7.F);
+}

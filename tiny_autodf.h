@@ -82,7 +82,11 @@ class AutoDf
         kLogType,       /// log(x) natural logarithm
         kLog10Type,     /// log10(x) logarithm
         kExpType,       /// exp(x) -> e^x
-        // kPowType        /// pow(x, n) -> x^n
+        kPow2Type,      /// (x^2) same as (x*x) - square of x
+        kReLUType,      /// ReLU(x) Rectified Linear Unit
+        kLReLUType,     /// LReLU(x) Leaky Rectified Linear Unit
+        kELUType,       /// ELU(x) Exponential Linear Unit
+        // kPowType     /// pow(x, n) -> x^n
     };
 
     /// If bulk creation of Variables is enabled, it keeps corresponding value
@@ -156,8 +160,16 @@ class AutoDf
                     return evalLog10();
                 case AutoDfType::kExpType:
                     return evalExp();
-                    //                case AutoDfType::kPowType:
-                    //                    return evalPow();
+                case AutoDfType::kPow2Type:
+                    return evalPow2();
+                case AutoDfType::kReLUType:
+                    return evalReLU();
+                case AutoDfType::kLReLUType:
+                    return evalLReLU();
+                case AutoDfType::kELUType:
+                    return evalELU();
+                    // case AutoDfType::kPowType:
+                    // return evalPow();
                 case AutoDfType::kConstType:
                 default:
                     return evalConst();
@@ -277,6 +289,69 @@ class AutoDf
                 const IdType id = dx_iter.first;
                 const ScalarType dx = dx_iter.second;
                 result.derivatives[id] = result.value * dx;
+            }
+            return result;
+        }
+
+        Evaluation evalPow2()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{left_eval.value * left_eval.value};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = ScalarType(2.) * left_eval.value * dx;
+            }
+            return result;
+        }
+
+        Evaluation evalReLU()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{left_eval.value > ScalarType(0.) ? left_eval.value : ScalarType(0.)};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = left_eval.value > ScalarType(0.) ? dx : ScalarType(0.F);
+            }
+            return result;
+        }
+
+        Evaluation evalLReLU()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{left_eval.value > ScalarType(0.) ? left_eval.value : ScalarType(0.01) * left_eval.value};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] = left_eval.value > ScalarType(0.) ? dx : ScalarType(0.01) * dx;
+            }
+            return result;
+        }
+
+        Evaluation evalELU()
+        {
+            const auto left_eval = left->eval();
+            Evaluation result{left_eval.value > ScalarType(0.)
+                                  ? left_eval.value
+                                  : ScalarType(0.01) * (std::exp(left_eval.value) - ScalarType(1.))};
+            *value = result.value;
+
+            for (auto dx_iter : left_eval.derivatives)
+            {
+                const IdType id = dx_iter.first;
+                const ScalarType dx = dx_iter.second;
+                result.derivatives[id] =
+                    left_eval.value > ScalarType(0.) ? dx : ScalarType(0.01) * std::exp(left_eval.value) * dx;
             }
             return result;
         }
@@ -538,6 +613,22 @@ class AutoDf
                     break;
                 case AutoDfType::kExpType:
                     stream << "exp(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kPow2Type:
+                    stream << "(";
+                    left->print(stream) << ")^2";
+                    break;
+                case AutoDfType::kReLUType:
+                    stream << "relu(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kLReLUType:
+                    stream << "lrelu(";
+                    left->print(stream) << ")";
+                    break;
+                case AutoDfType::kELUType:
+                    stream << "elu(";
                     left->print(stream) << ")";
                     break;
 
@@ -850,10 +941,37 @@ class AutoDf
         return AutoDf<ScalarType>(AutoDfType::kExpType, other.node_, nullptr, std::exp(*other.node_->value));
     }
 
-    static AutoDf<ScalarType> atan2(const AutoDf<ScalarType>& y, const AutoDf<ScalarType>& x)
+    static AutoDf<ScalarType> pow2(const AutoDf<ScalarType>& other)
     {
         return AutoDf<ScalarType>(
-            AutoDfType::kAtan2Type, y.node_, x.node_, std::atan2(*y.node_->value, *x.node_->value));
+            AutoDfType::kPow2Type, other.node_, nullptr, (*other.node_->value) * (*other.node_->value));
+    }
+
+    static AutoDf<ScalarType> relu(const AutoDf<ScalarType>& other)
+    {
+        const ScalarType x = (*other.node_->value);
+        const ScalarType value = (std::max(x, ScalarType(0.)));
+        return AutoDf<ScalarType>(AutoDfType::kReLUType, other.node_, nullptr, value);
+    }
+
+    static AutoDf<ScalarType> lrelu(const AutoDf<ScalarType>& other)
+    {
+        const ScalarType x = (*other.node_->value);
+        const ScalarType value = (x > ScalarType(0.) ? x : ScalarType(0.01) * x);
+        return AutoDf<ScalarType>(AutoDfType::kReLUType, other.node_, nullptr, value);
+    }
+
+    static AutoDf<ScalarType> elu(const AutoDf<ScalarType>& other)
+    {
+        const ScalarType x = (*other.node_->value);
+        const ScalarType value = (x > ScalarType(0.) ? x : ScalarType(0.01) * (std::exp(x) - ScalarType(1.)));
+        return AutoDf<ScalarType>(AutoDfType::kReLUType, other.node_, nullptr, value);
+    }
+
+    static AutoDf<ScalarType> atan2(const AutoDf<ScalarType>& y, const AutoDf<ScalarType>& x)
+    {
+        const ScalarType value = std::atan2(*y.node_->value, *x.node_->value);
+        return AutoDf<ScalarType>(AutoDfType::kAtan2Type, y.node_, x.node_, value);
     }
 
 #define AUTODF_DEFINE_OPERATOR(op)                                              \
@@ -1073,6 +1191,30 @@ template <typename ScalarType>
 AutoDf<ScalarType> exp(const AutoDf<ScalarType>& other)
 {
     return AutoDf<ScalarType>::exp(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> pow2(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::pow2(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> relu(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::relu(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> lrelu(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::lrelu(other);
+}
+
+template <typename ScalarType>
+AutoDf<ScalarType> elu(const AutoDf<ScalarType>& other)
+{
+    return AutoDf<ScalarType>::elu(other);
 }
 
 #define AUTODF_INSTANTIATE_TYPE(typename)                                                        \
