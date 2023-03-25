@@ -74,7 +74,7 @@ class AutoDf
         kDivType,       /// result of division of two input AutoDfs
         kAbsType,       /// absolute value of one input AutoDf
         kMaxType,       /// maximum value among two input AutoDfs
-        kMinType,       /// minumum value among two input AutoDfs
+        kMinType,       /// minimum value among two input AutoDfs
         kAtan2Type,     /// atan2(y,x)
         kSinType,       /// sin(x) value of one input AutoDf
         kCosType,       /// cos(x) value of one input AutoDf
@@ -193,7 +193,7 @@ class AutoDf
         {
             const auto left_eval = left->eval();
             Evaluation result{std::abs(left_eval.value)};
-            *value = result.value;  // update latest known value of this "dynamic" node
+            *value = result.value;  // update the latest known value of this "dynamic" node
             const bool sign_changed = left_eval.value < ScalarType(0.);
             for (auto dx_iter : left_eval.derivatives)
             {
@@ -707,9 +707,10 @@ class AutoDf
     }
 
     /// Creates named Variable
-    explicit AutoDf(const std::string name)
+    explicit AutoDf(const std::string name, ScalarType value = ScalarType(0.0))
     {
         node_ = std::make_shared<CallGraphNode>(AutoDfType::kVariableType);
+        *(node_->value) = value;
         node_->variables[node_->ID] = node_->value;
         node_->name = name;
     }
